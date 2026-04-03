@@ -1,0 +1,464 @@
+import json
+import os
+import random
+import math
+from collections import Counter
+import discord
+from discord.ext import commands
+from gamble_ui import build_gamble_embed, GambleView
+
+roulette_doubler = {}
+message_cooldown = commands.CooldownMapping.from_cooldown(1.0, 4.0, commands.BucketType.user)
+mode = "random"  # Change to "random" for random mode instead of pool mode
+pool_pulls = []
+
+OUTCOME_LABELS = {
+  "JACKPOT_10X": "10x Jackpot",
+  "TRIPLE_WIN": "Triple Win",
+  "DOUBLE_WIN": "Double Win",
+  "LOSE_ALL": "Lose All",
+  "TRIPLE_LOSS": "Triple Loss",
+  "DOUBLE_LOSS": "Double Loss",
+  "SINGLE_WIN": "Single Win",
+  "SINGLE_LOSS": "Single Loss",
+}
+
+
+def _build_pool_pulls():
+  jackpot_10x = random.choice([0, 1])
+  triple_win = random.randint(0, 2)
+  double_win = random.randint(0, 2)
+  lose_all = random.choice([0, 1])
+  triple_loss = random.randint(0, 2)
+  double_loss = random.randint(0, 2)
+
+  special_total = jackpot_10x + triple_win + double_win + lose_all + triple_loss + double_loss
+  remaining = max(0, 20 - special_total)
+
+  single_win = remaining // 2 + random.randint(-1, 1)
+  single_win = max(0, min(remaining, single_win))
+  single_loss = remaining - single_win
+
+  pulls = (
+    ["JACKPOT_10X"] * jackpot_10x
+    + ["TRIPLE_WIN"] * triple_win
+    + ["DOUBLE_WIN"] * double_win
+    + ["LOSE_ALL"] * lose_all
+    + ["TRIPLE_LOSS"] * triple_loss
+    + ["DOUBLE_LOSS"] * double_loss
+    + ["SINGLE_WIN"] * single_win
+    + ["SINGLE_LOSS"] * single_loss
+  )
+  random.shuffle(pulls)
+  return pulls
+
+
+def _next_pool_pull():
+  global pool_pulls
+  if not pool_pulls:
+    pool_pulls = _build_pool_pulls()
+  return pool_pulls.pop()
+
+
+def _next_random_pull():
+  roll = random.random() * 100
+
+  if roll < 0.5:
+    return "LOSE_ALL"
+  if roll < 2.5:
+    return "TRIPLE_LOSS"
+  if roll < 7.5:
+    return "DOUBLE_LOSS"
+  if roll < 8.0:
+    return "JACKPOT_10X"
+  if roll < 10.0:
+    return "TRIPLE_WIN"
+  if roll < 15.0:
+    return "DOUBLE_WIN"
+
+  return "SINGLE_LOSS" if random.randint(0, 1) == 0 else "SINGLE_WIN"
+
+
+def _draw_next_pull():
+  if mode == "pool":
+    return _next_pool_pull()
+  return _next_random_pull()
+
+
+def _pull_label(pull):
+  return OUTCOME_LABELS.get(pull, "Unknown")
+
+
+def _percent_cost(balance, ratio):
+  return max(1, math.ceil(balance * ratio))
+
+
+def _normalize_player_data(player_data):
+  if isinstance(player_data, dict):
+    name = str(player_data.get("name", "Unknown"))
+    money = player_data.get("money", 1)
+    win_streak = player_data.get("win_streak", 0)
+    last_amount_change = player_data.get("last_amount_change", 0)
+    last_multiplier = str(player_data.get("last_multiplier", "N/A"))
+    next_pull = player_data.get("next_pull")
+    next_pull_revealed = bool(player_data.get("next_pull_revealed", False))
+  else:
+    name = "Unknown"
+    money = player_data
+    win_streak = 0
+    last_amount_change = 0
+    last_multiplier = "N/A"
+    next_pull = None
+    next_pull_revealed = False
+
+  try:
+    money = int(money)
+  except (TypeError, ValueError):
+    money = 1
+
+  if money < 1:
+    money = 1
+
+  try:
+    win_streak = int(win_streak)
+  except (TypeError, ValueError):
+    win_streak = 0
+
+  if win_streak < 0:
+    win_streak = 0
+
+  try:
+    last_amount_change = int(last_amount_change)
+  except (TypeError, ValueError):
+    last_amount_change = 0
+
+  return {
+    "name": name,
+    "money": money,
+    "win_streak": win_streak,
+    "last_amount_change": last_amount_change,
+    "last_multiplier": last_multiplier,
+    "next_pull": next_pull if next_pull in OUTCOME_LABELS else None,
+    "next_pull_revealed": next_pull_revealed if next_pull in OUTCOME_LABELS else False
+  }
+
+
+def load_gamble_database(path="./databases/gambling.json"):
+  global roulette_doubler
+  try:
+    if os.path.exists(path):
+      with open(path, "r") as file:
+        data = json.load(file)
+        roulette_doubler = {
+          int(user_id): _normalize_player_data(player_data)
+          for user_id, player_data in data.items()
+        }
+  except Exception as e:
+    print(f"Error loading database: {e}")
+
+
+def save_gamble_database(path="./databases/gambling.json"):
+  try:
+    with open(path, "w") as file:
+      json.dump(roulette_doubler, file)
+  except Exception as e:
+    print(f"Error saving database: {e}")
+
+
+def _resolve_pull_outcome(current_money, wager, pull):
+  if pull == "LOSE_ALL":
+    return 1, False, "BIG LOSS reset to $1"
+  if pull == "TRIPLE_LOSS":
+    return max(1, current_money - (3 * wager)), False, "CRITICAL LOSS (3x wager lost)"
+  if pull == "DOUBLE_LOSS":
+    return max(1, current_money - (2 * wager)), False, "HEAVY LOSS (2x wager lost)"
+  if pull == "JACKPOT_10X":
+    return current_money + (10 * wager), True, "LEGENDARY WIN (10x wager won)"
+  if pull == "TRIPLE_WIN":
+    return current_money + (3 * wager), True, "MAJOR WIN (3x wager won)"
+  if pull == "DOUBLE_WIN":
+    return current_money + (2 * wager), True, "BIG WIN (2x wager won)"
+  if pull == "SINGLE_WIN":
+    return current_money + wager, True, "WIN"
+  return max(1, current_money - wager), False, "LOSS"
+
+
+def _resolve_pool_outcome(current_money, wager):
+  return _resolve_pull_outcome(current_money, wager, _next_pool_pull())
+
+
+def _resolve_random_outcome(current_money, wager):
+  return _resolve_pull_outcome(current_money, wager, _next_random_pull())
+
+
+def resolve_gamble_outcome(current_money, wager):
+  if mode == "pool":
+    return _resolve_pool_outcome(current_money, wager)
+  return _resolve_random_outcome(current_money, wager)
+
+
+class _CooldownContext:
+  def __init__(self, user):
+    self.author = user
+
+
+def _get_or_create_player(user_id, user_name):
+  if user_id not in roulette_doubler:
+    roulette_doubler[user_id] = {
+      "name": user_name,
+      "money": 1,
+      "win_streak": 0,
+      "last_amount_change": 0,
+      "last_multiplier": "N/A",
+      "next_pull": None,
+      "next_pull_revealed": False
+    }
+  else:
+    roulette_doubler[user_id]["name"] = user_name
+
+  player = roulette_doubler[user_id]
+  if player["money"] < 1:
+    player["money"] = 1
+  if "win_streak" not in player or player["win_streak"] < 0:
+    player["win_streak"] = 0
+  if "last_amount_change" not in player:
+    player["last_amount_change"] = 0
+  if "last_multiplier" not in player:
+    player["last_multiplier"] = "N/A"
+  if "next_pull" not in player or player["next_pull"] not in OUTCOME_LABELS:
+    player["next_pull"] = None
+  if "next_pull_revealed" not in player:
+    player["next_pull_revealed"] = False
+  if not player["next_pull"]:
+    player["next_pull_revealed"] = False
+  return player
+
+
+def _build_gamble_embed(player):
+  return build_gamble_embed(player, _pull_label)
+
+
+def _create_gamble_view():
+  return GambleView(
+    amount_submit_handler=process_gamble_interaction,
+    half_handler=_handle_gamble_half,
+    all_handler=_handle_gamble_all,
+    leaderboard_handler=_handle_leaderboard,
+    pool_left_handler=_handle_pool_left,
+    scry_handler=_handle_scry,
+    reroll_handler=_handle_reroll,
+    show_pool_left=(mode == "pool"),
+  )
+
+
+async def _send_or_refresh_panel_from_interaction(interaction, panel_message=None):
+  player = _get_or_create_player(interaction.user.id, interaction.user.display_name)
+  target_message = panel_message or getattr(interaction, "message", None)
+
+  if target_message:
+    await target_message.edit(
+      content="Use the buttons below to keep gambling.",
+      embed=_build_gamble_embed(player),
+      view=_create_gamble_view()
+    )
+    return
+
+  await interaction.followup.send(
+    "Use the buttons below to keep gambling.",
+    embed=_build_gamble_embed(player),
+    view=_create_gamble_view()
+  )
+
+
+async def process_gamble_interaction(interaction, wager_input, panel_message=None):
+  global roulette_doubler
+  user_id = interaction.user.id
+  user_name = interaction.user.display_name
+  player = _get_or_create_player(user_id, user_name)
+
+  wager_value = str(wager_input).strip().lower()
+  if player.get("next_pull_revealed", False) and wager_value not in ("all", "half"):
+    await interaction.response.send_message(
+      "Custom wager amounts are disabled after Scry. Use Gamble Half, Gamble All, or Reroll.",
+      ephemeral=True
+    )
+    return
+
+  if wager_value == "all":
+    wager = player["money"]
+  elif wager_value == "half":
+    wager = max(1, player["money"] // 2)
+  else:
+    try:
+      wager = int(wager_value)
+    except ValueError:
+      await interaction.response.send_message(
+        'Please indicate the amount you want to gamble using "gamble {amount to wager}".',
+        ephemeral=True
+      )
+      return
+
+  if wager <= 0:
+    await interaction.response.send_message("Your wager must be greater than 0.", ephemeral=True)
+    return
+
+  if wager > player["money"]:
+    await interaction.response.send_message(
+      f"You only have {player['money']} to gamble.",
+      ephemeral=True
+    )
+    return
+
+  cooldown_ctx = _CooldownContext(interaction.user)
+  bucket = message_cooldown.get_bucket(cooldown_ctx)
+  retry_after = bucket.update_rate_limit()
+  if retry_after:
+    await interaction.response.send_message(
+      f"STOP GAMBLING, you can gamble again after {round(retry_after, 2)} seconds",
+      ephemeral=True
+    )
+    return
+
+  previous_money = player["money"]
+  reserved_pull = player.get("next_pull")
+  if reserved_pull:
+    updated_money, did_win, multiplier_text = _resolve_pull_outcome(player["money"], wager, reserved_pull)
+    player["next_pull"] = None
+    player["next_pull_revealed"] = False
+  else:
+    updated_money, did_win, multiplier_text = resolve_gamble_outcome(player["money"], wager)
+  player["money"] = max(1, updated_money)
+  player["last_amount_change"] = player["money"] - previous_money
+  player["last_multiplier"] = multiplier_text
+  if did_win:
+    player["win_streak"] += 1
+  else:
+    player["win_streak"] = 0
+  await interaction.response.defer()
+  await _send_or_refresh_panel_from_interaction(interaction, panel_message=panel_message)
+
+
+async def _handle_gamble_half(interaction):
+  await process_gamble_interaction(interaction, "half")
+
+
+async def _handle_gamble_all(interaction):
+  await process_gamble_interaction(interaction, "all")
+
+
+async def _handle_leaderboard(interaction):
+  await interaction.response.send_message(gamble_leaderboard())
+
+
+async def _handle_pool_left(interaction):
+  await interaction.response.send_message(gamble_pool_breakdown(), ephemeral=True)
+
+
+async def _handle_scry(interaction):
+  player = _get_or_create_player(interaction.user.id, interaction.user.display_name)
+  if player["money"] < 15:
+    await interaction.response.send_message("You need at least 15 balance to scry the next pull.", ephemeral=True)
+    return
+  if player.get("next_pull") and player.get("next_pull_revealed", False):
+    await interaction.response.send_message(
+      "Your next pull is already revealed in the panel. Gamble or reroll it.",
+      ephemeral=True
+    )
+    return
+
+  cost = _percent_cost(player["money"], 0.30)
+  player["money"] = max(1, player["money"] - cost)
+  player["last_amount_change"] = -cost
+  player["last_multiplier"] = "PEEK FEE -30%"
+  if not player.get("next_pull"):
+    player["next_pull"] = _draw_next_pull()
+  player["next_pull_revealed"] = True
+
+  await interaction.response.defer()
+  await _send_or_refresh_panel_from_interaction(interaction)
+
+
+async def _handle_reroll(interaction):
+  player = _get_or_create_player(interaction.user.id, interaction.user.display_name)
+  if player["money"] < 10:
+    await interaction.response.send_message("You need at least 10 balance to reroll your next pull.", ephemeral=True)
+    return
+
+  cost = _percent_cost(player["money"], 0.15)
+  if not player.get("next_pull"):
+    player["next_pull"] = _draw_next_pull()
+  player["money"] = max(1, player["money"] - cost)
+  player["last_amount_change"] = -cost
+  player["last_multiplier"] = "REROLL FEE -15%"
+  player["next_pull"] = _draw_next_pull()
+  player["next_pull_revealed"] = False
+
+  await interaction.response.defer()
+  await _send_or_refresh_panel_from_interaction(interaction)
+
+
+async def send_gamble_panel(msg):
+  player = _get_or_create_player(msg.author.id, msg.author.display_name)
+  panel_text = "Welcome to the Catgpt Gamble Game! Use the buttons below to start gambling." if player["money"] == 1 else "Welcome back to the Catgpt Gamble Game! Use the buttons below to keep gambling."
+  await msg.reply(panel_text, embed=_build_gamble_embed(player), view=_create_gamble_view())
+
+
+async def roulette(msg):
+  await send_gamble_panel(msg)
+
+
+def gamble_leaderboard(limit=10):
+  if not roulette_doubler:
+    return "No gambling records yet."
+
+  sorted_players = sorted(
+    roulette_doubler.items(),
+    key=lambda entry: entry[1]["money"],
+    reverse=True
+  )[:limit]
+
+  lines = ["🏆 Gamble Leaderboard"]
+  for rank, (_, player_data) in enumerate(sorted_players, start=1):
+    lines.append(f"{rank}. {player_data['name']} - {player_data['money']}")
+
+  return "\n".join(lines)
+
+
+def gamble_balance(user_id):
+  player = roulette_doubler.get(user_id)
+  if not player:
+    return 1
+  return player.get("money", 1)
+
+
+def gamble_pool_pulls_left():
+  if mode != "pool":
+    return "Pool mode is off."
+  return f"{len(pool_pulls)} pulls left in the current pool."
+
+
+def gamble_pool_breakdown():
+  if mode != "pool":
+    return "Pool mode is off."
+
+  if not pool_pulls:
+    current_pulls = _build_pool_pulls()
+  else:
+    current_pulls = list(pool_pulls)
+
+  counts = Counter(current_pulls)
+  order = [
+    ("JACKPOT_10X", "10x Jackpot"),
+    ("TRIPLE_WIN", "Triple Win"),
+    ("DOUBLE_WIN", "Double Win"),
+    ("LOSE_ALL", "Lose All"),
+    ("TRIPLE_LOSS", "Triple Loss"),
+    ("DOUBLE_LOSS", "Double Loss"),
+    ("SINGLE_WIN", "Single Win"),
+    ("SINGLE_LOSS", "Single Loss"),
+  ]
+
+  lines = [f"Pool mode is on. {len(current_pulls)} pulls left:"]
+  for key, label in order:
+    lines.append(f"{label}: {counts.get(key, 0)}")
+  return "\n".join(lines)
