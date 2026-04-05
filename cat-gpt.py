@@ -108,8 +108,18 @@ def game():
   return sum
 
 def acronym(phrase):
+  if len(phrase.split()) == 1:
+    return word_acronym(phrase)
+  else:
+    return phrase_acronym(phrase)
+
+def word_acronym(word):
+  acronym = word[-(len(word) // 2):].upper()
+  acronym_map[word] = acronym
+  return acronym
+
+def phrase_acronym(phrase):
   acronym = ""
-  print(phrase)
   for word in phrase.split():
     if word[0].isalpha():
       acronym += word[0].upper()
@@ -129,7 +139,7 @@ def meowSeparate(msg):
 
 @client.event
 async def on_message(msg):
-  if msg.content.startswith("catgpt"):  
+  if msg.content.startswith("catgpt"):
       await msg.reply(await chat(msg))
   else: 
     if msg.author == client.user:
@@ -148,22 +158,22 @@ async def on_message(msg):
     if msg.content.startswith("acro"):
       await msg.reply(acronym(msg.content[4:].lower().strip()))
     
-    if msg.content.startswith("count"):  
+    if msg.content.startswith("count"):
       await msg.reply(counter())
   
-    if msg.content.startswith("roll"):  
+    if msg.content.startswith("roll"):
       await msg.reply(game())
 
-    if msg.content.startswith("gamble"):  
+    if msg.content.startswith("gamble"):
       await send_gamble_panel(msg)
       
-    if msg.content.startswith("say hi"):  
-      await msg.reply(Something) 
+    if msg.content.startswith("say hi"):
+      await msg.reply(Something)
   
-    if msg.content.startswith("cat"):  
-      await msg.reply(Cat_Gif) 
+    if msg.content.startswith("cat"):
+      await msg.reply(Cat_Gif)
      
-    if msg.content.startswith("blouis"):  
+    if msg.content.startswith("blouis"):
       await msg.reply(Blouis) 
      
     if msg.content.startswith("redward"):  
