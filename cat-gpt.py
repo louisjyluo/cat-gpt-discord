@@ -1,15 +1,14 @@
 
 import os
-import json
 import discord
 import random
-from openai import OpenAI
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import asyncio
 from discord.ext import commands
 from dotenv import load_dotenv
 from gamble import send_gamble_panel, load_gamble_database, save_gamble_database
+from acronym import acronym, load_acronym_database, save_acronym_database, get_matching_acronym
+from llm import chat
 
 load_dotenv()
 
@@ -17,58 +16,17 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 client = discord.Client(intents=intents)
-catClient = OpenAI(api_key=os.getenv('CATSEEK'))
 bot = commands.Bot(command_prefix="", intents = intents)
 
-api_request_counter = 0
 global_count = 0
 
-
-acronym_map = {}
-
 def load_database():
-  global acronym_map
   load_gamble_database()
-  try:
-    if os.path.exists("./databases/acronyms.json"):
-      with open("./databases/acronyms.json", "r") as file:
-        acronym_map = json.load(file)
-  except Exception as e:
-    print(f"Error loading database: {e}")
+  load_acronym_database()
 
 def save_database():
   save_gamble_database()
-  try:   
-    with open("./databases/acronyms.json", "w") as file:
-      json.dump(acronym_map, file)
-  except Exception as e:
-    print(f"Error saving database: {e}")
-
-async def chat(msg):
-  global api_request_counter
-  api_request_counter += 1
-  print(f"API Request Count: {api_request_counter}")
-
-  try:
-    user_message = msg.content
-    system_prompt = "Make the response sound like a cat replied and do not exceed 200 words under any circumstance."
-
-    response = catClient.chat.completions.create(
-      model="gpt-4o",
-      messages=[
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message}
-      ]
-    )
-
-    assistant_message = response.choices[0].message.content
-    await asyncio.sleep(1)
-
-    return assistant_message
-
-  except Exception as e:
-    print(f"Error: {e}")
-    return "Merrorr: Something went mwrong mmmmmm"
+  save_acronym_database()
 
 @client.event
 async def on_ready():
@@ -77,7 +35,6 @@ async def on_ready():
 Something = "Hi, I am Catgpt, I respond in meows"
 meow = ['meow']
 Cat_Gif = "https://tenor.com/view/cat-meow-fat-augh-gif-24948731"
-Stickman = "https://cdn.discordapp.com/attachments/1044692376746205244/1154472233805299743/59QL.gif"
 WithoutMe = ['shower', 'bed','sleep','kms', 'kill myself']
 Blouis = "https://media.discordapp.net/attachments/1167731497134985239/1350984991521378455/blouis.png?ex=67da0bd2&is=67d8ba52&hm=137da4b3c04b2aed10ef63a460142ac89999cf6dd84308031a822592eaff4121&=&format=webp&quality=lossless&width=880&height=1174"
 Redward = "https://media.discordapp.net/attachments/1167182348664709256/1351370224133472408/IMG_4161.jpg?ex=67da2118&is=67d8cf98&hm=1d3f5982cef9f011aee2f2dcd2d67fc8af18103d5f274414c2acdd108544ee6d&=&format=webp&width=880&height=1172"
@@ -87,6 +44,33 @@ alpha = {
     "s": 0, "t": 0, "u": 0, "v": 0, "w": 0, "x": 0, "y": 0, "z": 0
 }
 skulls = {"wtf", "?", "wtf?", "weird guy", "💀"}
+protected_acro_phrases = {
+    "catgpt",
+    "lex",
+    "acro",
+    "count",
+    "roll",
+    "gamble",
+    "say hi",
+    "cat",
+    "blouis",
+    "redward",
+    "help"
+}
+HELP_MESSAGE = (
+  "**CatGPT Commands**\n"
+  "- `catgpt <message>`: Ask CatGPT a question.\n"
+  "- `lex <word>`: Alphabetically sorts letters in the word.\n"
+  "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
+  "- `count`: Increases and shows the current counter.\n"
+  "- `roll`: Rolls a random number from 1 to 1000.\n"
+  "- `gamble`: Opens the gambling panel.\n"
+  "- `say hi`: Bot says hello.\n"
+  "- `cat`: Sends the cat gif.\n"
+  "- `blouis`: Sends the Blouis image.\n"
+  "- `redward`: Sends the Redward image.\n"
+  "- `help`: Shows this command list."
+)
 
 def alphabetize(word):
     lower_case = word.lower()
@@ -106,25 +90,6 @@ def alphabetize(word):
 def game():
   sum = random.randint(1,1000)
   return sum
-
-def acronym(phrase):
-  if len(phrase.split()) == 1:
-    return word_acronym(phrase)
-  else:
-    return phrase_acronym(phrase)
-
-def word_acronym(word):
-  acronym = word[-(len(word) // 2):].upper()
-  acronym_map[word] = acronym
-  return acronym
-
-def phrase_acronym(phrase):
-  acronym = ""
-  for word in phrase.split():
-    if word[0].isalpha():
-      acronym += word[0].upper()
-  acronym_map[phrase.lower().strip()] = acronym
-  return acronym
 
 def counter():
   try:
@@ -148,15 +113,21 @@ async def on_message(msg):
       await msg.reply(alphabetize(msg.content[3:]))
     
     content_lower = msg.content.lower().strip()
-    matched_phrase = next(
-      (phrase for phrase in sorted(acronym_map.keys(), key=len, reverse=True) if phrase in content_lower),
-      None
-    )
-    if matched_phrase:
-      await msg.reply("The Big " + acronym_map[matched_phrase])
+    matched_acronym = get_matching_acronym(content_lower)
+    if matched_acronym:
+      await msg.reply("The Big " + matched_acronym)
 
     if msg.content.startswith("acro"):
-      await msg.reply(acronym(msg.content[4:].lower().strip()))
+      acro_input = msg.content[4:].lower().strip()
+      if acro_input in protected_acro_phrases:
+        await msg.reply("You can't acro bot commands.")
+      elif acro_input:
+        await msg.reply(acronym(acro_input))
+      else:
+        await msg.reply("Usage: acro <word or phrase>")
+
+    if msg.content.startswith("help"):
+      await msg.reply(HELP_MESSAGE)
     
     if msg.content.startswith("count"):
       await msg.reply(counter())
