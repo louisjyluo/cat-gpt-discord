@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from gamble import send_gamble_panel, load_gamble_database, save_gamble_database
 from acronym import acronym, load_acronym_database, save_acronym_database, get_matching_acronym
 from llm import chat
+from db import init_db, close_db
 
 load_dotenv()
 
@@ -160,6 +161,7 @@ async def on_message(msg):
       await msg.reply("without me? :pleading_face:") 
 
 try:
+  init_db()
   load_database()
   token = os.getenv("TOKEN") or ""
   if token == "":
@@ -177,3 +179,4 @@ except discord.HTTPException as e:
         raise e
 finally:
   save_database()
+  close_db()

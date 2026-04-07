@@ -1,4 +1,3 @@
-import json
 import os
 import random
 import math
@@ -6,8 +5,9 @@ from collections import Counter
 import discord
 from discord.ext import commands
 from gamble_ui import build_gamble_embed, GambleView
+from db import gamble_collection
 
-roulette_doubler = {}
+roulette_doubler = {}  # In-memory cache of player data
 message_cooldown = commands.CooldownMapping.from_cooldown(1.0, 4.0, commands.BucketType.user)
 mode = "random"  # Change to "random" for random mode instead of pool mode
 pool_pulls = []
@@ -144,25 +144,32 @@ def _normalize_player_data(player_data):
 
 
 def load_gamble_database(path="./databases/gambling.json"):
+  """Load gamble data from MongoDB into memory cache."""
   global roulette_doubler
   try:
-    if os.path.exists(path):
-      with open(path, "r") as file:
-        data = json.load(file)
-        roulette_doubler = {
-          int(user_id): _normalize_player_data(player_data)
-          for user_id, player_data in data.items()
-        }
+    documents = gamble_collection.find({})
+    roulette_doubler = {}
+    for doc in documents:
+      user_id = int(doc['user_id'])
+      roulette_doubler[user_id] = _normalize_player_data(doc)
+    print(f"Loaded {len(roulette_doubler)} players from MongoDB")
   except Exception as e:
-    print(f"Error loading database: {e}")
+    print(f"Error loading gamble database: {e}")
 
 
 def save_gamble_database(path="./databases/gambling.json"):
+  """Save all player data to MongoDB."""
   try:
-    with open(path, "w") as file:
-      json.dump(roulette_doubler, file)
+    for user_id, player_data in roulette_doubler.items():
+      player_data['user_id'] = str(user_id)
+      gamble_collection.update_one(
+        {'user_id': str(user_id)},
+        {'$set': player_data},
+        upsert=True
+      )
+    print(f"Saved {len(roulette_doubler)} players to MongoDB")
   except Exception as e:
-    print(f"Error saving database: {e}")
+    print(f"Error saving gamble database: {e}")
 
 
 def _resolve_pull_outcome(current_money, wager, pull):
@@ -203,16 +210,35 @@ class _CooldownContext:
 
 
 def _get_or_create_player(user_id, user_name):
+  """Get or create a player, fetching from MongoDB if not in cache."""
   if user_id not in roulette_doubler:
-    roulette_doubler[user_id] = {
-      "name": user_name,
-      "money": 1,
-      "win_streak": 0,
-      "last_amount_change": 0,
-      "last_multiplier": "N/A",
-      "next_pull": None,
-      "next_pull_revealed": False
-    }
+    # Try to load from MongoDB first
+    try:
+      db_player = gamble_collection.find_one({'user_id': str(user_id)})
+      if db_player:
+        player = _normalize_player_data(db_player)
+      else:
+        player = {
+          "name": user_name,
+          "money": 1,
+          "win_streak": 0,
+          "last_amount_change": 0,
+          "last_multiplier": "N/A",
+          "next_pull": None,
+          "next_pull_revealed": False
+        }
+    except Exception as e:
+      print(f"Error loading player from DB: {e}")
+      player = {
+        "name": user_name,
+        "money": 1,
+        "win_streak": 0,
+        "last_amount_change": 0,
+        "last_multiplier": "N/A",
+        "next_pull": None,
+        "next_pull_revealed": False
+      }
+    roulette_doubler[user_id] = player
   else:
     roulette_doubler[user_id]["name"] = user_name
 
@@ -275,6 +301,19 @@ async def process_gamble_interaction(interaction, wager_input, panel_message=Non
   user_id = interaction.user.id
   user_name = interaction.user.display_name
   player = _get_or_create_player(user_id, user_name)
+  
+  # Save to MongoDB after getting/creating player
+  def _save_player_to_db():
+    try:
+      player_data = player.copy()
+      player_data['user_id'] = str(user_id)
+      gamble_collection.update_one(
+        {'user_id': str(user_id)},
+        {'$set': player_data},
+        upsert=True
+      )
+    except Exception as e:
+      print(f"Error saving player {user_id}: {e}")
 
   wager_value = str(wager_input).strip().lower()
   if player.get("next_pull_revealed", False) and wager_value not in ("all", "half"):
@@ -335,6 +374,7 @@ async def process_gamble_interaction(interaction, wager_input, panel_message=Non
   else:
     player["win_streak"] = 0
   await interaction.response.defer()
+  _save_player_to_db()  # Save to MongoDB
   await _send_or_refresh_panel_from_interaction(interaction, panel_message=panel_message)
 
 
@@ -374,6 +414,18 @@ async def _handle_scry(interaction):
     player["next_pull"] = _draw_next_pull()
   player["next_pull_revealed"] = True
 
+  # Save to MongoDB
+  try:
+    player_data = player.copy()
+    player_data['user_id'] = str(interaction.user.id)
+    gamble_collection.update_one(
+      {'user_id': str(interaction.user.id)},
+      {'$set': player_data},
+      upsert=True
+    )
+  except Exception as e:
+    print(f"Error saving player: {e}")
+
   await interaction.response.defer()
   await _send_or_refresh_panel_from_interaction(interaction)
 
@@ -392,6 +444,18 @@ async def _handle_reroll(interaction):
   player["last_multiplier"] = "REROLL FEE -15%"
   player["next_pull"] = _draw_next_pull()
   player["next_pull_revealed"] = False
+
+  # Save to MongoDB
+  try:
+    player_data = player.copy()
+    player_data['user_id'] = str(interaction.user.id)
+    gamble_collection.update_one(
+      {'user_id': str(interaction.user.id)},
+      {'$set': player_data},
+      upsert=True
+    )
+  except Exception as e:
+    print(f"Error saving player: {e}")
 
   await interaction.response.defer()
   await _send_or_refresh_panel_from_interaction(interaction)
