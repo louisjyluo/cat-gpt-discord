@@ -1,5 +1,7 @@
 
 import os
+import io
+import json
 import discord
 import random
 from flask import Flask, request, jsonify
@@ -9,7 +11,7 @@ from dotenv import load_dotenv
 from gamble import send_gamble_panel, load_gamble_database, save_gamble_database
 from acronym import acronym, load_acronym_database, save_acronym_database, get_matching_acronym
 from llm import chat
-from db import init_db, close_db
+from db import init_db, close_db, extract_collection_json, bulk_upload_acronyms, bulk_upload_gamble, validate_bulk_password, validate_bulk_target
 
 load_dotenv()
 
@@ -49,6 +51,8 @@ protected_acro_phrases = {
     "catgpt",
     "lex",
     "acro",
+    "extract",
+    "upload",
     "count",
     "roll",
     "gamble",
@@ -63,6 +67,8 @@ HELP_MESSAGE = (
   "- `catgpt <message>`: Ask CatGPT a question.\n"
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
+  "- `extract <acro|gamble> <password>`: Exports MongoDB data as a JSON attachment.\n"
+  "- `upload <acro|gamble> <password>`: Bulk imports data from JSON file (attach file).\n"
   "- `count`: Increases and shows the current counter.\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
   "- `gamble`: Opens the gambling panel.\n"
@@ -112,6 +118,81 @@ async def on_message(msg):
       return 
     if msg.content.startswith("lex"):
       await msg.reply(alphabetize(msg.content[3:]))
+
+    if msg.content.startswith("extract"):
+      parts = msg.content[7:].lower().strip().split()
+      if len(parts) < 2:
+        await msg.reply("Usage: extract <acro|gamble> <password>")
+        return
+      
+      extract_target = parts[0]
+      password = parts[1]
+      
+      try:
+        validate_bulk_target(extract_target)
+        validate_bulk_password(password)
+      except ValueError as e:
+        await msg.reply(f"❌ {e}")
+        return
+      
+      try:
+        json_payload, export_filename = extract_collection_json(extract_target)
+        export_file = discord.File(
+          fp=io.BytesIO(json_payload.encode("utf-8")),
+          filename=export_filename
+        )
+        await msg.reply(f"Here is your {extract_target} database export.", file=export_file)
+      except Exception as e:
+        await msg.reply(f"Failed to export data: {e}")
+      return
+    
+    if msg.content.startswith("upload"):
+      parts = msg.content[6:].lower().strip().split()
+      if len(parts) < 2:
+        await msg.reply("Usage: upload <acro|gamble> <password> (with JSON file attachment)")
+        return
+      
+      upload_target = parts[0]
+      password = parts[1]
+      
+      try:
+        validate_bulk_target(upload_target)
+        validate_bulk_password(password)
+      except ValueError as e:
+        await msg.reply(f"❌ {e}")
+        return
+      
+      if not msg.attachments:
+        await msg.reply("Please attach a JSON file to upload.")
+        return
+      
+      attachment = msg.attachments[0]
+      if not attachment.filename.endswith('.json'):
+        await msg.reply("File must be a JSON file (.json)")
+        return
+      
+      try:
+        # Download and parse JSON
+        file_content = await attachment.read()
+        data = json.loads(file_content.decode('utf-8'))
+        
+        # Upload based on target
+        if upload_target == "acro":
+          result = bulk_upload_acronyms(data)
+          await msg.reply(f"✅ Acronyms: {result}")
+        elif upload_target == "gamble":
+          result = bulk_upload_gamble(data)
+          await msg.reply(f"✅ Gamble: {result}")
+        
+        # Reload the data into memory
+        load_database()
+      except json.JSONDecodeError:
+        await msg.reply("❌ Invalid JSON file format.")
+      except ValueError as e:
+        await msg.reply(f"❌ Data validation error: {e}")
+      except Exception as e:
+        await msg.reply(f"❌ Upload failed: {e}")
+      return
     
     content_lower = msg.content.lower().strip()
     matched_acronym = get_matching_acronym(content_lower)
