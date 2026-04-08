@@ -5,3 +5,4 @@ flask-cors
 httpx
 python-dotenv
 pymongo
+numpy

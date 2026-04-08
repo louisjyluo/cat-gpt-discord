@@ -14,6 +14,9 @@ db = client['catgpt_db']
 # Collections
 acronym_collection = db['acronyms']
 gamble_collection = db['gamble']
+balance_collection = db['balances']
+racers_collection = db['racers']
+race_history_collection = db['race_history']
 
 
 def init_db():
@@ -23,9 +26,89 @@ def init_db():
     acronym_collection.create_index('phrase', unique=True)
     # Create index on user_id for gamble data
     gamble_collection.create_index('user_id', unique=True)
+    # Create index on user_id for shared balances
+    balance_collection.create_index('user_id', unique=True)
+    # Create indexes for persisted racers
+    racers_collection.create_index([('guild_id', 1), ('racer_id', 1)], unique=True)
+    racers_collection.create_index([('guild_id', 1), ('owner_id', 1)])
+    # Create index for race history dedupe
+    race_history_collection.create_index([('guild_id', 1), ('race_signature', 1)], unique=True)
     print("Database initialized successfully")
   except Exception as e:
     print(f"Error initializing database: {e}")
+
+
+def log_race_result(guild_id, race_signature, turns, results):
+  """Persist final race standings. Returns True when inserted, False if duplicate signature."""
+  payload = {
+    'guild_id': str(guild_id),
+    'race_signature': str(race_signature),
+    'turns': int(turns),
+    'results': results,
+  }
+  result = race_history_collection.update_one(
+    {'guild_id': str(guild_id), 'race_signature': str(race_signature)},
+    {'$setOnInsert': payload},
+    upsert=True,
+  )
+  return bool(result.upserted_id)
+
+
+def load_racer_records(guild_id):
+  """Load all persisted racer records for a guild."""
+  return list(racers_collection.find({'guild_id': str(guild_id)}, {'_id': 0}))
+
+
+def upsert_racer_record(guild_id, racer_record):
+  """Upsert one persisted racer record for a guild."""
+  record = {**racer_record, 'guild_id': str(guild_id)}
+  racers_collection.update_one(
+    {'guild_id': str(guild_id), 'racer_id': record['racer_id']},
+    {'$set': record},
+    upsert=True,
+  )
+
+
+def delete_racer_record(guild_id, racer_id):
+  """Delete one persisted racer record for a guild."""
+  racers_collection.delete_one({'guild_id': str(guild_id), 'racer_id': str(racer_id)})
+
+
+def delete_guild_racer_records(guild_id):
+  """Delete all persisted racer records for a guild."""
+  racers_collection.delete_many({'guild_id': str(guild_id)})
+
+
+def get_user_balance(user_id, default_balance=1):
+  """Get shared user balance used by both gamble and race systems."""
+  uid = str(user_id)
+  doc = balance_collection.find_one({'user_id': uid})
+  if not doc:
+    return int(default_balance)
+
+  amount = doc.get('money', default_balance)
+  try:
+    amount = int(amount)
+  except (TypeError, ValueError):
+    amount = int(default_balance)
+  return max(1, amount)
+
+
+def set_user_balance(user_id, amount):
+  """Set shared user balance and return normalized stored value."""
+  uid = str(user_id)
+  try:
+    normalized = int(amount)
+  except (TypeError, ValueError):
+    normalized = 1
+  normalized = max(1, normalized)
+
+  balance_collection.update_one(
+    {'user_id': uid},
+    {'$set': {'user_id': uid, 'money': normalized}},
+    upsert=True
+  )
+  return normalized
 
 
 def close_db():
@@ -70,6 +153,7 @@ def extract_collection_json(target):
       if user_id is None:
         continue
       player_data = {k: v for k, v in doc.items() if k != "user_id"}
+      player_data["money"] = get_user_balance(user_id)
       formatted[str(user_id)] = player_data
     return json.dumps(formatted, indent=2, ensure_ascii=False), "gamble_export.json"
 
@@ -103,12 +187,10 @@ def validate_gamble_data(data):
     if not isinstance(player_data, dict):
       raise ValueError(f"Player data for user {user_id} must be an object, got: {type(player_data)}")
     
-    # Validate required fields
-    if "money" not in player_data:
-      raise ValueError(f"Player data for user {user_id} missing required field: money")
-    
-    if not isinstance(player_data["money"], (int, float)) or player_data["money"] < 1:
-      raise ValueError(f"Player money for user {user_id} must be a number >= 1, got: {player_data['money']}")
+    # Validate optional shared money field if present
+    if "money" in player_data:
+      if not isinstance(player_data["money"], (int, float)) or player_data["money"] < 1:
+        raise ValueError(f"Player money for user {user_id} must be a number >= 1, got: {player_data['money']}")
     
     # Validate optional fields if present
     if "name" in player_data and not isinstance(player_data["name"], str):
@@ -154,8 +236,13 @@ def bulk_upload_gamble(data):
   updated = 0
   try:
     for user_id, player_data in data.items():
+      shared_money = player_data.get("money")
+      if shared_money is not None:
+        set_user_balance(user_id, shared_money)
+
       # Add user_id to the document
-      doc = {'user_id': user_id, **player_data}
+      doc_payload = {k: v for k, v in player_data.items() if k != "money"}
+      doc = {'user_id': user_id, **doc_payload}
       result = gamble_collection.update_one(
         {'user_id': user_id},
         {'$set': doc},

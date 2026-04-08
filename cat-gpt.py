@@ -11,7 +11,9 @@ from dotenv import load_dotenv
 from gamble import send_gamble_panel, load_gamble_database, save_gamble_database
 from acronym import acronym, load_acronym_database, save_acronym_database, get_matching_acronym
 from llm import chat
-from db import init_db, close_db, extract_collection_json, bulk_upload_acronyms, bulk_upload_gamble, validate_bulk_password, validate_bulk_target
+from db import init_db, close_db, extract_collection_json, bulk_upload_acronyms, bulk_upload_gamble, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
+from race_ui import RacePanelView, build_race_embed
+from racer_ui import RacersPanelView, build_racers_embed
 
 load_dotenv()
 
@@ -20,6 +22,8 @@ intents.message_content = True
 
 client = discord.Client(intents=intents)
 bot = commands.Bot(command_prefix="", intents = intents)
+client.add_view(RacePanelView())
+client.add_view(RacersPanelView())
 
 global_count = 0
 
@@ -39,6 +43,7 @@ Something = "Hi, I am Catgpt, I respond in meows"
 meow = ['meow']
 Cat_Gif = "https://tenor.com/view/cat-meow-fat-augh-gif-24948731"
 WithoutMe = ['shower', 'bed','sleep','kms', 'kill myself']
+BLOUIS_ID = int(os.getenv("BLOUIS_ID") or "0")
 Blouis = "https://media.discordapp.net/attachments/1167731497134985239/1350984991521378455/blouis.png?ex=67da0bd2&is=67d8ba52&hm=137da4b3c04b2aed10ef63a460142ac89999cf6dd84308031a822592eaff4121&=&format=webp&quality=lossless&width=880&height=1174"
 Redward = "https://media.discordapp.net/attachments/1167182348664709256/1351370224133472408/IMG_4161.jpg?ex=67da2118&is=67d8cf98&hm=1d3f5982cef9f011aee2f2dcd2d67fc8af18103d5f274414c2acdd108544ee6d&=&format=webp&width=880&height=1172"
 alpha = {
@@ -46,7 +51,7 @@ alpha = {
     "j": 0, "k": 0, "l": 0, "m": 0, "n": 0, "o": 0, "p": 0, "q": 0, "r": 0, 
     "s": 0, "t": 0, "u": 0, "v": 0, "w": 0, "x": 0, "y": 0, "z": 0
 }
-skulls = {"wtf", "?", "wtf?", "weird guy", "💀"}
+skulls = {"wtf", "wtf?", "weird guy", "💀"}
 protected_acro_phrases = {
     "catgpt",
     "lex",
@@ -71,6 +76,11 @@ HELP_MESSAGE = (
   "- `upload <acro|gamble> <password>`: Bulk imports data from JSON file (attach file).\n"
   "- `count`: Increases and shows the current counter.\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
+  "- `bank`: Shows your current balance.\n"
+  "- `stim <username> <$amount>`: Adds money to a user's balance (Blouis only).\n"
+  "- `racer`: Opens your racers UI (alias of `racers`).\n"
+  "- `racers`: Opens your racers UI (create racer + form by index).\n"
+  "- `race`: Opens the race panel.\n"
   "- `gamble`: Opens the gambling panel.\n"
   "- `say hi`: Bot says hello.\n"
   "- `cat`: Sends the cat gif.\n"
@@ -108,6 +118,28 @@ def counter():
 
 def meowSeparate(msg):
   return msg.replace("meow", "**meow**")
+
+
+def resolve_stim_target_id(msg, username_arg):
+  token = username_arg.strip()
+  if token.startswith("<@") and token.endswith(">"):
+    token = token[2:-1]
+    if token.startswith("!"):
+      token = token[1:]
+
+  if token.isdigit():
+    return int(token)
+
+  if msg.guild is None:
+    if token == msg.author.name or token == msg.author.display_name:
+      return msg.author.id
+    return None
+
+  lowered = token.lower()
+  for member in msg.guild.members:
+    if member.name.lower() == lowered or member.display_name.lower() == lowered:
+      return member.id
+  return None
 
 @client.event
 async def on_message(msg):
@@ -217,9 +249,58 @@ async def on_message(msg):
     if msg.content.startswith("roll"):
       await msg.reply(game())
 
+    if msg.content.startswith("bank"):
+      balance = get_user_balance(msg.author.id)
+      await msg.reply(f"<@{msg.author.id}> has ${balance}.")
+
+    if msg.content.startswith("stim"):
+      parts = msg.content.split()
+      if len(parts) != 3:
+        await msg.reply("Usage: stim <username> <$amount>")
+        return
+
+      if msg.author.id != BLOUIS_ID:
+        await msg.reply("Only Blouis can use stim.")
+        return
+
+      _, username_arg, amount_arg = parts
+      target_user_id = resolve_stim_target_id(msg, username_arg)
+      if target_user_id is None:
+        await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
+        return
+
+      amount_text = amount_arg[1:] if amount_arg.startswith("$") else amount_arg
+      try:
+        amount = int(amount_text)
+      except ValueError:
+        await msg.reply("Amount must be an integer. Example: $100")
+        return
+
+      if amount < 1:
+        await msg.reply("Amount must be greater than 0.")
+        return
+
+      balance = get_user_balance(target_user_id)
+      set_user_balance(target_user_id, balance + amount)
+      await msg.reply(f"big yahu gave u a stim check of ${amount}")
+      return
+
     if msg.content.startswith("gamble"):
       await send_gamble_panel(msg)
-      
+
+    if msg.content in {"racer", "racers"}:
+      if msg.guild is None:
+        await msg.reply("Racers UI only works in a server.")
+      else:
+        await msg.reply(embed=build_racers_embed(msg.guild.id, msg.author.id, msg.author.display_name), view=RacersPanelView())
+      return
+    
+    if msg.content == "race":
+      if msg.guild is None:
+        await msg.reply("The race panel only works in a server.")
+      else:
+        await msg.reply(embed=build_race_embed(msg.guild.id), view=RacePanelView(msg.guild.id))
+    
     if msg.content.startswith("say hi"):
       await msg.reply(Something)
   
@@ -231,9 +312,13 @@ async def on_message(msg):
      
     if msg.content.startswith("redward"):  
       await msg.reply(Redward) 
-
+    
     if any(word in msg.content for word in skulls):
-       await msg.add_reaction("💀") 
+      emoji = discord.utils.get(msg.guild.emojis, name='worstpainpossible')
+      if emoji:
+        await msg.add_reaction(emoji)
+      else:
+        await msg.add_reaction(':skull:')
   
     if any(word in msg.content for word in meow):
       await msg.reply(meowSeparate(msg.content)) 

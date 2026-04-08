@@ -5,7 +5,7 @@ from collections import Counter
 import discord
 from discord.ext import commands
 from gamble_ui import build_gamble_embed, GambleView
-from db import gamble_collection
+from db import gamble_collection, get_user_balance, set_user_balance
 
 roulette_doubler = {}  # In-memory cache of player data
 message_cooldown = commands.CooldownMapping.from_cooldown(1.0, 4.0, commands.BucketType.user)
@@ -96,7 +96,6 @@ def _percent_cost(balance, ratio):
 def _normalize_player_data(player_data):
   if isinstance(player_data, dict):
     name = str(player_data.get("name", "Unknown"))
-    money = player_data.get("money", 1)
     win_streak = player_data.get("win_streak", 0)
     last_amount_change = player_data.get("last_amount_change", 0)
     last_multiplier = str(player_data.get("last_multiplier", "N/A"))
@@ -104,20 +103,11 @@ def _normalize_player_data(player_data):
     next_pull_revealed = bool(player_data.get("next_pull_revealed", False))
   else:
     name = "Unknown"
-    money = player_data
     win_streak = 0
     last_amount_change = 0
     last_multiplier = "N/A"
     next_pull = None
     next_pull_revealed = False
-
-  try:
-    money = int(money)
-  except (TypeError, ValueError):
-    money = 1
-
-  if money < 1:
-    money = 1
 
   try:
     win_streak = int(win_streak)
@@ -134,7 +124,6 @@ def _normalize_player_data(player_data):
 
   return {
     "name": name,
-    "money": money,
     "win_streak": win_streak,
     "last_amount_change": last_amount_change,
     "last_multiplier": last_multiplier,
@@ -151,7 +140,9 @@ def load_gamble_database(path="./databases/gambling.json"):
     roulette_doubler = {}
     for doc in documents:
       user_id = int(doc['user_id'])
-      roulette_doubler[user_id] = _normalize_player_data(doc)
+      player = _normalize_player_data(doc)
+      player["money"] = get_user_balance(user_id)
+      roulette_doubler[user_id] = player
     print(f"Loaded {len(roulette_doubler)} players from MongoDB")
   except Exception as e:
     print(f"Error loading gamble database: {e}")
@@ -161,10 +152,12 @@ def save_gamble_database(path="./databases/gambling.json"):
   """Save all player data to MongoDB."""
   try:
     for user_id, player_data in roulette_doubler.items():
-      player_data['user_id'] = str(user_id)
+      set_user_balance(user_id, player_data.get("money", 1))
+      doc_payload = {k: v for k, v in player_data.items() if k != "money"}
+      doc_payload['user_id'] = str(user_id)
       gamble_collection.update_one(
         {'user_id': str(user_id)},
-        {'$set': player_data},
+        {'$set': doc_payload},
         upsert=True
       )
     print(f"Saved {len(roulette_doubler)} players to MongoDB")
@@ -220,7 +213,6 @@ def _get_or_create_player(user_id, user_name):
       else:
         player = {
           "name": user_name,
-          "money": 1,
           "win_streak": 0,
           "last_amount_change": 0,
           "last_multiplier": "N/A",
@@ -231,16 +223,17 @@ def _get_or_create_player(user_id, user_name):
       print(f"Error loading player from DB: {e}")
       player = {
         "name": user_name,
-        "money": 1,
         "win_streak": 0,
         "last_amount_change": 0,
         "last_multiplier": "N/A",
         "next_pull": None,
         "next_pull_revealed": False
       }
+    player["money"] = get_user_balance(user_id)
     roulette_doubler[user_id] = player
   else:
     roulette_doubler[user_id]["name"] = user_name
+    roulette_doubler[user_id]["money"] = get_user_balance(user_id)
 
   player = roulette_doubler[user_id]
   if player["money"] < 1:
@@ -305,7 +298,8 @@ async def process_gamble_interaction(interaction, wager_input, panel_message=Non
   # Save to MongoDB after getting/creating player
   def _save_player_to_db():
     try:
-      player_data = player.copy()
+      set_user_balance(user_id, player.get("money", 1))
+      player_data = {k: v for k, v in player.items() if k != "money"}
       player_data['user_id'] = str(user_id)
       gamble_collection.update_one(
         {'user_id': str(user_id)},
@@ -416,7 +410,8 @@ async def _handle_scry(interaction):
 
   # Save to MongoDB
   try:
-    player_data = player.copy()
+    set_user_balance(interaction.user.id, player.get("money", 1))
+    player_data = {k: v for k, v in player.items() if k != "money"}
     player_data['user_id'] = str(interaction.user.id)
     gamble_collection.update_one(
       {'user_id': str(interaction.user.id)},
@@ -447,7 +442,8 @@ async def _handle_reroll(interaction):
 
   # Save to MongoDB
   try:
-    player_data = player.copy()
+    set_user_balance(interaction.user.id, player.get("money", 1))
+    player_data = {k: v for k, v in player.items() if k != "money"}
     player_data['user_id'] = str(interaction.user.id)
     gamble_collection.update_one(
       {'user_id': str(interaction.user.id)},
@@ -489,10 +485,7 @@ def gamble_leaderboard(limit=10):
 
 
 def gamble_balance(user_id):
-  player = roulette_doubler.get(user_id)
-  if not player:
-    return 1
-  return player.get("money", 1)
+  return get_user_balance(user_id)
 
 
 def gamble_pool_pulls_left():
