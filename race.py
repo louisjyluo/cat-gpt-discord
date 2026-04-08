@@ -231,7 +231,7 @@ class Race:
         active_racers = self.joined_racers()
         standings = self.standings()
         rank_by_name = {row['name'].lower(): row['rank'] for row in standings}
-        finish_multiplier = {1: 1.8, 2: 1.5, 3: 1.3}
+        finish_payout = {1: 125, 2: 50, 3: 25}
         bet_multiplier = {1: 1.0, 2: 0.5, 3: 0.1}
         owner_payout_lines = []
         bettor_payout_lines = []
@@ -239,17 +239,17 @@ class Race:
         one_v_one = len(active_racers) == 2
 
         if one_v_one:
-            finish_multiplier = {1: 1.5, 2: 0.0}
+            finish_payout = {1: 100, 2: 0}
             bet_multiplier = {1: 1.5, 2: 0.0}
 
         # Pay racer owners based on placement and charisma.
         for racer in active_racers:
             rank = rank_by_name.get(racer.name.lower())
-            placement_mult = finish_multiplier.get(rank, 0.0) if isinstance(rank, int) else 0.0
+            placement_amount = finish_payout.get(rank, 0) if isinstance(rank, int) else 0
             if solo_race:
-                placement_mult = 0.0
+                placement_amount = 0
             balance = get_user_balance(racer.owner_id)
-            reward = int(balance * placement_mult * racer.charisma) if placement_mult > 0 else 0
+            reward = int(placement_amount) if placement_amount > 0 else 0
             new_balance = balance
             if reward > 0:
                 new_balance = balance + reward
@@ -290,7 +290,9 @@ class Race:
         if solo_race:
             self.payout_summary_lines.append("Solo race detected: no payouts awarded.")
         elif one_v_one:
-            self.payout_summary_lines.append("1v1 rules: winner gets 1.5x, loser gets 0.")
+            self.payout_summary_lines.append("1v1 rules: 1st gets $100, 2nd gets $0.")
+        else:
+            self.payout_summary_lines.append("Placement payouts: 1st $125, 2nd $50, 3rd $25, rest $0.")
         if owner_payout_lines:
             self.payout_summary_lines.extend(owner_payout_lines)
         else:
