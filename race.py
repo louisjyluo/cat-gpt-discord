@@ -183,6 +183,8 @@ class Race:
         raise ValueError("Your primary racer was not found.")
 
     def join_primary_racer(self, owner_id: int) -> Racer:
+        if self.turns > 0:
+            raise ValueError("You cannot join after the race has started. Start a new race first.")
         racer = self.get_primary_racer(owner_id)
         if racer.in_race:
             raise ValueError("Your primary racer is already in this race.")

@@ -54,6 +54,20 @@ def log_race_result(guild_id, race_signature, turns, results):
   return bool(result.upserted_id)
 
 
+def get_recent_race_history(guild_id, limit=10):
+  """Load recent race history records for a guild (most recent first)."""
+  try:
+    normalized_limit = max(1, int(limit))
+  except (TypeError, ValueError):
+    normalized_limit = 10
+
+  cursor = race_history_collection.find(
+    {'guild_id': str(guild_id)},
+    {'_id': 0, 'guild_id': 0}
+  ).sort('_id', -1).limit(normalized_limit)
+  return list(cursor)
+
+
 def load_racer_records(guild_id):
   """Load all persisted racer records for a guild."""
   return list(racers_collection.find({'guild_id': str(guild_id)}, {'_id': 0}))

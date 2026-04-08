@@ -19,12 +19,19 @@ def save_acronym_database():
 
 
 def acronym(phrase):
+  normalized = phrase.strip()
+  if len(normalized.replace(" ", "")) < 4:
+    raise ValueError("Phrase must be at least 4 characters long.")
   if len(phrase.split()) == 1:
     return word_acronym(phrase)
   return phrase_acronym(phrase)
 
 
 def word_acronym(word):
+  normalized = word.strip()
+  if len(normalized) < 4:
+    raise ValueError("Word must be at least 4 characters long.")
+
   generated_acronym = word[-(len(word) // 2):].upper()
   # Upsert: update if exists, insert if not
   acronym_collection.update_one(
@@ -65,3 +72,12 @@ def get_matching_acronym(content_lower):
   except Exception as e:
     print(f"Error getting matching acronym: {e}")
     return None
+
+
+def unacronym(phrase):
+  normalized = phrase.strip().lower()
+  if not normalized:
+    raise ValueError("Word or phrase cannot be empty.")
+
+  result = acronym_collection.delete_one({'phrase': normalized})
+  return result.deleted_count > 0

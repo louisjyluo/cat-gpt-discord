@@ -9,10 +9,10 @@ from flask_cors import CORS
 from discord.ext import commands
 from dotenv import load_dotenv
 from gamble import send_gamble_panel, load_gamble_database, save_gamble_database
-from acronym import acronym, load_acronym_database, save_acronym_database, get_matching_acronym
+from acronym import acronym, unacronym, load_acronym_database, save_acronym_database, get_matching_acronym
 from llm import chat
 from db import init_db, close_db, extract_collection_json, bulk_upload_acronyms, bulk_upload_gamble, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
-from race_ui import RacePanelView, build_race_embed
+from race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
 from racer_ui import RacersPanelView, build_racers_embed
 
 load_dotenv()
@@ -56,10 +56,16 @@ protected_acro_phrases = {
     "catgpt",
     "lex",
     "acro",
+    "unacro",
     "extract",
     "upload",
     "count",
     "roll",
+    "bank",
+    "stim",
+    "racer",
+    "racers",
+    "race",
     "gamble",
     "say hi",
     "cat",
@@ -72,15 +78,17 @@ HELP_MESSAGE = (
   "- `catgpt <message>`: Ask CatGPT a question.\n"
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
+  "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
   "- `extract <acro|gamble> <password>`: Exports MongoDB data as a JSON attachment.\n"
   "- `upload <acro|gamble> <password>`: Bulk imports data from JSON file (attach file).\n"
   "- `count`: Increases and shows the current counter.\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
-  "- `bank`: Shows your current balance.\n"
+  "- `bank [username]`: Shows your balance or another user's balance.\n"
   "- `stim <username> <$amount>`: Adds money to a user's balance (Blouis only).\n"
   "- `racer`: Opens your racers UI (alias of `racers`).\n"
   "- `racers`: Opens your racers UI (create racer + form by index).\n"
   "- `race`: Opens the race panel.\n"
+  "- `race history`: Shows last 10 races with details button.\n"
   "- `gamble`: Opens the gambling panel.\n"
   "- `say hi`: Bot says hello.\n"
   "- `cat`: Sends the cat gif.\n"
@@ -236,9 +244,27 @@ async def on_message(msg):
       if acro_input in protected_acro_phrases:
         await msg.reply("You can't acro bot commands.")
       elif acro_input:
-        await msg.reply(acronym(acro_input))
+        try:
+          created_acronym = acronym(acro_input)
+          await msg.reply(f"Acronym added: {created_acronym}")
+        except ValueError as e:
+          await msg.reply(str(e))
       else:
         await msg.reply("Usage: acro <word or phrase>")
+
+    if msg.content.startswith("unacro"):
+      acro_input = msg.content[6:].lower().strip()
+      if acro_input:
+        try:
+          removed = unacronym(acro_input)
+          if removed:
+            await msg.reply(f"Acronym removed: {acro_input}")
+          else:
+            await msg.reply("No acronym found for that word or phrase.")
+        except ValueError as e:
+          await msg.reply(str(e))
+      else:
+        await msg.reply("Usage: unacro <word or phrase>")
 
     if msg.content.startswith("help"):
       await msg.reply(HELP_MESSAGE)
@@ -250,8 +276,17 @@ async def on_message(msg):
       await msg.reply(game())
 
     if msg.content.startswith("bank"):
-      balance = get_user_balance(msg.author.id)
-      await msg.reply(f"<@{msg.author.id}> has ${balance}.")
+      parts = msg.content.split(maxsplit=1)
+      if len(parts) == 1:
+        target_user_id = msg.author.id
+      else:
+        target_user_id = resolve_stim_target_id(msg, parts[1])
+        if target_user_id is None:
+          await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
+          return
+
+      balance = get_user_balance(target_user_id)
+      await msg.reply(f"<@{target_user_id}> has ${balance}.")
 
     if msg.content.startswith("stim"):
       parts = msg.content.split()
@@ -276,8 +311,8 @@ async def on_message(msg):
         await msg.reply("Amount must be an integer. Example: $100")
         return
 
-      if amount < 1:
-        await msg.reply("Amount must be greater than 0.")
+      if amount == 0:
+        await msg.reply("Amount cannot be 0.")
         return
 
       balance = get_user_balance(target_user_id)
@@ -300,6 +335,13 @@ async def on_message(msg):
         await msg.reply("The race panel only works in a server.")
       else:
         await msg.reply(embed=build_race_embed(msg.guild.id), view=RacePanelView(msg.guild.id))
+
+    if msg.content == "race history":
+      if msg.guild is None:
+        await msg.reply("Race history only works in a server.")
+      else:
+        await msg.reply(embed=build_race_history_embed(msg.guild.id, 10), view=RaceHistoryView(msg.guild.id))
+      return
     
     if msg.content.startswith("say hi"):
       await msg.reply(Something)
