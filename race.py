@@ -2,6 +2,7 @@ import random
 import math
 import uuid
 import hashlib
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Dict, List
 from db import delete_racer_record, get_user_balance, set_user_balance, load_racer_records, upsert_racer_record, log_race_result
@@ -14,6 +15,27 @@ MAX_SINGLE_STAT = 5
 UPGRADABLE_STATS = {"speed", "stamina", "charisma", "adrenaline"}
 JOIN_RACE_COST = 25
 RACER_COST_PER_OWNED = 100
+CHARISMA_STUN_CHANCE = 35
+CHARISMA_STUN_DURATION = 3
+
+
+def _looks_like_default_emoji(text: str) -> bool:
+    cleaned = text.strip()
+    if not cleaned:
+        return False
+    if cleaned.startswith("<:") or cleaned.startswith("<a:"):
+        return False
+    if cleaned.startswith(":") and cleaned.endswith(":") and len(cleaned) > 2:
+        return True
+
+    emoji_like_chars = 0
+    for char in cleaned:
+        if char.isalnum() or char.isspace():
+            return False
+        if unicodedata.category(char) == "So" or ord(char) in {0xFE0F, 0x200D}:
+            emoji_like_chars += 1
+
+    return emoji_like_chars > 0
 
 
 @dataclass
@@ -35,6 +57,9 @@ class Racer:
     turns_taken: int = 0
     last_move: int = 0
     last_adrenaline_boost: bool = False
+    stun_turns_remaining: int = 0
+    stunned_by_name: str = ""
+    stunned_by_owner_id: int = 0
     in_race: bool = False
     creation_cost: int = 0
 
@@ -78,12 +103,25 @@ class Racer:
     def adrenaline_boost(self):
         return 1 - math.exp(-self.adrenaline / self.ADRENALINE_BOOST_RATE)
 
+    def charisma_stun_chance(self):
+        return 1 - math.exp(-self.charisma / CHARISMA_STUN_CHANCE)
+
+    def is_stunned(self):
+        return self.stun_turns_remaining > 0
+
+    def apply_stun(self, turns: int = CHARISMA_STUN_DURATION):
+        self.stun_turns_remaining = max(self.stun_turns_remaining, turns)
+
+    def set_stun_source(self, source_name: str, source_owner_id: int):
+        self.stunned_by_name = source_name
+        self.stunned_by_owner_id = source_owner_id
+
     def chance_to_jump(self):
         adrenaline_roll = random.random()
         self.last_adrenaline_boost = False
         self.jump_chance = self.stamina_penalty()
         if adrenaline_roll < self.adrenaline_boost():
-            self.jump_chance *= 1.2
+            self.jump_chance += 0.15
             self.last_adrenaline_boost = True
         return min(self.jump_chance, 1.0)
 
@@ -93,9 +131,17 @@ class Racer:
             self.last_adrenaline_boost = False
             return 0
 
+        if self.is_stunned():
+            self.stun_turns_remaining -= 1
+            self.last_move = 0
+            self.last_adrenaline_boost = False
+            self.turns_taken += 1
+            return 0
+
         self.jump_chance = self.chance_to_jump()
         if self.jump_chance < 0.01:
             self.last_move = 0
+            self.turns_taken += 1
             return 0
 
         move = 0
@@ -124,6 +170,30 @@ class Race:
     bets_by_user: Dict[int, Dict[str, object]] = field(default_factory=dict)
     pending_finish_response: str = ""
     payout_summary_lines: List[str] = field(default_factory=list)
+
+    def _available_stun_targets(self, source_racer: Racer) -> List[Racer]:
+        return [
+            racer
+            for racer in self.joined_racers()
+            if racer.racer_id != source_racer.racer_id and not racer.finished
+        ]
+
+    def _apply_charisma_stun(self, source_racer: Racer):
+        targets = self._available_stun_targets(source_racer)
+        if not targets:
+            return None
+
+        target = random.choice(targets)
+        target.apply_stun(CHARISMA_STUN_DURATION)
+        target.set_stun_source(source_racer.name, source_racer.owner_id)
+        return target
+
+    def _is_one_v_one(self) -> bool:
+        return len(self.joined_racers()) == 2
+
+    def _one_v_one_has_winner(self) -> bool:
+        active = self.joined_racers()
+        return len(active) == 2 and any(racer.finished for racer in active)
 
     def add_racer(
         self,
@@ -314,6 +384,9 @@ class Race:
             racer.turns_taken = 0
             racer.last_move = 0
             racer.last_adrenaline_boost = False
+            racer.stun_turns_remaining = 0
+            racer.stunned_by_name = ""
+            racer.stunned_by_owner_id = 0
             racer.in_race = False
 
         self.turns = 0
@@ -332,13 +405,19 @@ class Race:
 
         self.turns += 1
         for racer in active:
+            was_stunned = racer.is_stunned()
             racer.advance()
+            if not was_stunned and not racer.finished and random.random() < racer.charisma_stun_chance():
+                self._apply_charisma_stun(racer)
         return self
 
     def standings(self):
         active = self.joined_racers()
         finishers = [r for r in active if r.finished]
-        dnfs = [r for r in active if not r.finished and r.jump_chance < 0.05]
+        if self._one_v_one_has_winner():
+            dnfs = [r for r in active if not r.finished]
+        else:
+            dnfs = [r for r in active if not r.finished and r.jump_chance < 0.05]
 
         finishers.sort(key=lambda r: (r.turns_taken, -r.position, r.name.lower()))
         dnfs.sort(key=lambda r: (-r.position, r.turns_taken, r.name.lower()))
@@ -383,6 +462,8 @@ class Race:
 
     def all_finished(self) -> bool:
         active = self.joined_racers()
+        if self._one_v_one_has_winner():
+            return True
         return bool(active) and all(racer.finished for racer in active)
 
     def all_stalled(self) -> bool:
@@ -395,6 +476,8 @@ class Race:
     def _track_for_racer(self, racer: Racer) -> str:
         cells = [" - "] * TRACK_LENGTH
         if racer.name.startswith("<:") or racer.name.startswith("<a:"):
+            marker = racer.name
+        elif _looks_like_default_emoji(racer.name):
             marker = racer.name
         else:
             first_char = racer.name[:1]
@@ -411,11 +494,28 @@ class Race:
         lines = []
         for index, racer in enumerate(self.joined_racers(), start=1):
             owner = f"<@{racer.owner_id}>"
-            status = "finished" if racer.finished else f"% to move {racer.jump_chance:.2f}"
-            boost_text = " - ADRENALINE BOOST" if racer.last_adrenaline_boost else ""
+            if racer.finished:
+                status = "finished"
+            else:
+                status = f"% to move {racer.jump_chance:.2f}"
             lines.append(
-                f"{index}. {racer.name} - {owner} - {status}{boost_text}"
+                f"{index}. {racer.name} - {owner} - {status}"
             )
+        return lines
+
+    def event_lines(self) -> List[str]:
+        lines = []
+        for racer in self.joined_racers():
+            if racer.last_adrenaline_boost:
+                lines.append(f"⚡ {racer.name} got an adrenaline boost.")
+            if racer.is_stunned():
+                if racer.stunned_by_name:
+                    lines.append(
+                        f"💘 {racer.name} is charmed by {racer.stunned_by_name} "
+                        f"(<@{racer.stunned_by_owner_id}>) for {racer.stun_turns_remaining} more turns."
+                    )
+                else:
+                    lines.append(f"💘 {racer.name} is charmed for {racer.stun_turns_remaining} more turns.")
         return lines
 
     def track_lines(self) -> List[str]:
@@ -445,6 +545,9 @@ def _serialize_racer(race: Race, racer: Racer):
         'turns_taken': racer.turns_taken,
         'last_move': racer.last_move,
         'last_adrenaline_boost': racer.last_adrenaline_boost,
+        'stun_turns_remaining': racer.stun_turns_remaining,
+        'stunned_by_name': racer.stunned_by_name,
+        'stunned_by_owner_id': str(racer.stunned_by_owner_id),
         'in_race': racer.in_race,
         'creation_cost': racer.creation_cost,
         'is_primary': race.primary_by_owner.get(racer.owner_id) == racer.racer_id,
@@ -481,6 +584,9 @@ def _load_race_from_db(guild_id: int) -> Race:
             turns_taken=int(record.get('turns_taken', 0)),
             last_move=int(record.get('last_move', 0)),
             last_adrenaline_boost=bool(record.get('last_adrenaline_boost', False)),
+            stun_turns_remaining=int(record.get('stun_turns_remaining', 0)),
+            stunned_by_name=str(record.get('stunned_by_name', '')),
+            stunned_by_owner_id=int(record.get('stunned_by_owner_id', 0)),
             in_race=bool(record.get('in_race', False)),
             creation_cost=int(record.get('creation_cost', 0)),
         )

@@ -29,19 +29,25 @@ def build_race_embed(guild_id):
   if race.racers:
     summary_lines = race.summary_lines()
     track_lines = race.track_lines()
+    event_lines = race.event_lines()
     summary_text = "\n".join(summary_lines)
     track_text = "\n".join(track_lines)
+    event_text = "\n".join(event_lines) if event_lines else "No events this turn."
 
     if len(summary_text) > 1024:
       summary_text = summary_text[:1021] + "..."
     if len(track_text) > 1024:
       track_text = track_text[:1021] + "..."
+    if len(event_text) > 1024:
+      event_text = event_text[:1021] + "..."
 
     embed.add_field(name="Racer List", value=summary_text, inline=False)
     embed.add_field(name="Track", value=track_text, inline=False)
+    embed.add_field(name="Events", value=event_text, inline=False)
   else:
     embed.add_field(name="Racer List", value="No racers yet.", inline=False)
     embed.add_field(name="Track", value="No racers yet.", inline=False)
+    embed.add_field(name="Events", value="No events yet.", inline=False)
 
   return embed
 
