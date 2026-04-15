@@ -46,7 +46,9 @@ async def summarize_text(text):
     system_prompt = (
       "You are CatGPT. Summarize the user's provided Discord message in a clear, concise way. "
       "Keep it under 120 words. Preserve key facts, names, and numbers. "
-      "Use 2-5 bullet points, and keep a light cat-like tone without adding fake details."
+      "Make sure the summary is shorter than the original message."
+      "Use 1-5 bullet points if necessary. Do not add any information that is not explicitly stated in the original message."
+      "Prioritize sounding like a cat."
     )
 
     response = catClient.chat.completions.create(

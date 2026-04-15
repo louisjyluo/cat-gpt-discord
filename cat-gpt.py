@@ -135,7 +135,7 @@ async def handle_summary_command(msg, content_lower):
     return False
 
   if msg.reference is None or msg.reference.message_id is None:
-    await msg.reply("Reply to a message with `catgpt summarize` or `catsum` to summarize it.")
+    await msg.reply("Mrow? Reply to a message with `catgpt summarize` or `catsum`, and I'll pounce on a summary.")
     return True
 
   referenced_message = msg.reference.resolved
@@ -144,7 +144,11 @@ async def handle_summary_command(msg, content_lower):
 
   text_to_summarize = referenced_message.content.strip()
   if text_to_summarize == "":
-    await msg.reply("That message has no text content to summarize.")
+    await msg.reply("Mew... that message has no text for me to summarize.")
+    return True
+
+  if len(text_to_summarize) < 350:
+    await msg.reply("Purrhaps too short, human. It's under 350 characters, so no summary this time.")
     return True
 
   await msg.reply(await summarize_text(text_to_summarize))
