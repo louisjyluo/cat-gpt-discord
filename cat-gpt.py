@@ -10,7 +10,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from gamble import send_gamble_panel, load_gamble_database, save_gamble_database
 from acronym import acronym, unacronym, load_acronym_database, save_acronym_database, get_matching_acronym
-from llm import chat
+from llm import chat, summarize_text
 from db import init_db, close_db, extract_collection_json, bulk_upload_acronyms, bulk_upload_gamble, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
 from race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
 from racer_ui import RacersPanelView, build_racers_embed
@@ -67,11 +67,13 @@ protected_acro_phrases = {
     "cat",
     "blouis",
     "redward",
+    "catsum",
     "help"
 }
 HELP_MESSAGE = (
   "**CatGPT Commands**\n"
   "- `catgpt <message>`: Ask CatGPT a question.\n"
+  "- `catgpt summarize` or `catsum`: Reply to a message to summarize it.\n"
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
@@ -127,219 +129,305 @@ def resolve_stim_target_id(msg, username_arg):
       return member.id
   return None
 
+
+async def handle_summary_command(msg, content_lower):
+  if content_lower not in {"catgpt summarize", "catsum"}:
+    return False
+
+  if msg.reference is None or msg.reference.message_id is None:
+    await msg.reply("Reply to a message with `catgpt summarize` or `catsum` to summarize it.")
+    return True
+
+  referenced_message = msg.reference.resolved
+  if not isinstance(referenced_message, discord.Message):
+    referenced_message = await msg.channel.fetch_message(msg.reference.message_id)
+
+  text_to_summarize = referenced_message.content.strip()
+  if text_to_summarize == "":
+    await msg.reply("That message has no text content to summarize.")
+    return True
+
+  await msg.reply(await summarize_text(text_to_summarize))
+  return True
+
+
+async def handle_catgpt_chat_command(msg, content_lower):
+  if content_lower.startswith("catgpt") and not content_lower.startswith("catgpt summarize"):
+    await msg.reply(await chat(msg))
+    return True
+  return False
+
+
+async def handle_lex_command(msg):
+  if msg.content.startswith("lex"):
+    await msg.reply(alphabetize(msg.content[3:]))
+  return False
+
+
+async def handle_extract_command(msg):
+  if not msg.content.startswith("extract"):
+    return False
+
+  parts = msg.content[7:].lower().strip().split()
+  if len(parts) < 2:
+    await msg.reply("Usage: extract <acro|gamble> <password>")
+    return True
+
+  extract_target = parts[0]
+  password = parts[1]
+
+  try:
+    validate_bulk_target(extract_target)
+    validate_bulk_password(password)
+  except ValueError as e:
+    await msg.reply(f"❌ {e}")
+    return True
+
+  try:
+    json_payload, export_filename = extract_collection_json(extract_target)
+    export_file = discord.File(
+      fp=io.BytesIO(json_payload.encode("utf-8")),
+      filename=export_filename
+    )
+    await msg.reply(f"Here is your {extract_target} database export.", file=export_file)
+  except Exception as e:
+    await msg.reply(f"Failed to export data: {e}")
+  return True
+
+
+async def handle_upload_command(msg):
+  if not msg.content.startswith("upload"):
+    return False
+
+  parts = msg.content[6:].lower().strip().split()
+  if len(parts) < 2:
+    await msg.reply("Usage: upload <acro|gamble> <password> (with JSON file attachment)")
+    return True
+
+  upload_target = parts[0]
+  password = parts[1]
+
+  try:
+    validate_bulk_target(upload_target)
+    validate_bulk_password(password)
+  except ValueError as e:
+    await msg.reply(f"❌ {e}")
+    return True
+
+  if not msg.attachments:
+    await msg.reply("Please attach a JSON file to upload.")
+    return True
+
+  attachment = msg.attachments[0]
+  if not attachment.filename.endswith('.json'):
+    await msg.reply("File must be a JSON file (.json)")
+    return True
+
+  try:
+    file_content = await attachment.read()
+    data = json.loads(file_content.decode('utf-8'))
+
+    if upload_target == "acro":
+      result = bulk_upload_acronyms(data)
+      await msg.reply(f"✅ Acronyms: {result}")
+    elif upload_target == "gamble":
+      result = bulk_upload_gamble(data)
+      await msg.reply(f"✅ Gamble: {result}")
+
+    load_database()
+  except json.JSONDecodeError:
+    await msg.reply("❌ Invalid JSON file format.")
+  except ValueError as e:
+    await msg.reply(f"❌ Data validation error: {e}")
+  except Exception as e:
+    await msg.reply(f"❌ Upload failed: {e}")
+  return True
+
+
+async def handle_acro_command(msg, protected_phrases):
+  if not msg.content.startswith("acro"):
+    return False
+
+  acro_input = msg.content[4:].lower().strip()
+  if acro_input in protected_phrases:
+    await msg.reply("You can't acro bot commands.")
+  elif acro_input:
+    try:
+      created_acronym = acronym(acro_input)
+      await msg.reply(f"Acronym added: {created_acronym}")
+    except ValueError as e:
+      await msg.reply(str(e))
+  else:
+    await msg.reply("Usage: acro <word or phrase>")
+  return False
+
+
+async def handle_unacro_command(msg):
+  if not msg.content.startswith("unacro"):
+    return False
+
+  acro_input = msg.content[6:].lower().strip()
+  if acro_input:
+    try:
+      removed = unacronym(acro_input)
+      if removed:
+        await msg.reply(f"Acronym removed: {acro_input}")
+      else:
+        await msg.reply("No acronym found for that word or phrase.")
+    except ValueError as e:
+      await msg.reply(str(e))
+  else:
+    await msg.reply("Usage: unacro <word or phrase>")
+  return False
+
+
+async def handle_bank_command(msg):
+  if not msg.content.startswith("bank"):
+    return False
+
+  parts = msg.content.split(maxsplit=1)
+  if len(parts) == 1:
+    target_user_id = msg.author.id
+  else:
+    target_user_id = resolve_stim_target_id(msg, parts[1])
+    if target_user_id is None:
+      await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
+      return True
+
+  balance = get_user_balance(target_user_id)
+  await msg.reply(f"<@{target_user_id}> has ${balance}.")
+  return False
+
+
+async def handle_stim_command(msg):
+  if not msg.content.startswith("stim"):
+    return False
+
+  parts = msg.content.split()
+  if len(parts) != 3:
+    await msg.reply("Usage: stim <username> <$amount>")
+    return True
+
+  if msg.author.id != BLOUIS_ID:
+    await msg.reply("Only Blouis can use stim.")
+    return True
+
+  _, username_arg, amount_arg = parts
+  target_user_id = resolve_stim_target_id(msg, username_arg)
+  if target_user_id is None:
+    await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
+    return True
+
+  amount_text = amount_arg[1:] if amount_arg.startswith("$") else amount_arg
+  try:
+    amount = int(amount_text)
+  except ValueError:
+    await msg.reply("Amount must be an integer. Example: $100")
+    return True
+
+  if amount == 0:
+    await msg.reply("Amount cannot be 0.")
+    return True
+
+  balance = get_user_balance(target_user_id)
+  set_user_balance(target_user_id, balance + amount)
+  await msg.reply(f"big yahu gave u a stim check of ${amount}")
+  return True
+
+
+async def handle_exact_commands(msg, content_lower):
+  match content_lower:
+    case "help":
+      await msg.reply(HELP_MESSAGE)
+      return False
+    case "roll":
+      await msg.reply(game())
+      return False
+    case "gamble":
+      await send_gamble_panel(msg)
+      return False
+    case "racer" | "racers":
+      if msg.guild is None:
+        await msg.reply("Racers UI only works in a server.")
+      else:
+        await msg.reply(embed=build_racers_embed(msg.guild.id, msg.author.id, msg.author.display_name), view=RacersPanelView())
+      return True
+    case "race":
+      if msg.guild is None:
+        await msg.reply("The race panel only works in a server.")
+      else:
+        await msg.reply(embed=build_race_embed(msg.guild.id), view=RacePanelView(msg.guild.id))
+      return False
+    case "race history":
+      if msg.guild is None:
+        await msg.reply("Race history only works in a server.")
+      else:
+        await msg.reply(embed=build_race_history_embed(msg.guild.id, 10), view=RaceHistoryView(msg.guild.id))
+      return True
+    case "say hi":
+      await msg.reply(Something)
+      return False
+    case "cat":
+      await msg.reply(Cat_Gif)
+      return False
+    case "blouis":
+      await msg.reply(Blouis)
+      return False
+    case "redward":
+      await msg.reply(Redward)
+      return False
+    case _:
+      return False
+
+
+async def handle_passive_reactions(msg):
+  if any(word in msg.content for word in skulls):
+    emoji = discord.utils.get(msg.guild.emojis, name='tetoaddressme')
+    if emoji:
+      await msg.add_reaction(emoji)
+    else:
+      await msg.add_reaction(':skull:')
+
+  if any(word in msg.content for word in meow):
+    await msg.reply(meowSeparate(msg.content))
+
 @client.event
 async def on_message(msg):
   if msg.author == client.user:
     return
 
-  if msg.content.startswith("catgpt"):
-      await msg.reply(await chat(msg))
-  else: 
-    if msg.content.startswith("lex"):
-      await msg.reply(alphabetize(msg.content[3:]))
+  content_lower = msg.content.lower().strip()
 
-    if msg.content.startswith("extract"):
-      parts = msg.content[7:].lower().strip().split()
-      if len(parts) < 2:
-        await msg.reply("Usage: extract <acro|gamble> <password>")
-        return
-      
-      extract_target = parts[0]
-      password = parts[1]
-      
-      try:
-        validate_bulk_target(extract_target)
-        validate_bulk_password(password)
-      except ValueError as e:
-        await msg.reply(f"❌ {e}")
-        return
-      
-      try:
-        json_payload, export_filename = extract_collection_json(extract_target)
-        export_file = discord.File(
-          fp=io.BytesIO(json_payload.encode("utf-8")),
-          filename=export_filename
-        )
-        await msg.reply(f"Here is your {extract_target} database export.", file=export_file)
-      except Exception as e:
-        await msg.reply(f"Failed to export data: {e}")
-      return
-    
-    if msg.content.startswith("upload"):
-      parts = msg.content[6:].lower().strip().split()
-      if len(parts) < 2:
-        await msg.reply("Usage: upload <acro|gamble> <password> (with JSON file attachment)")
-        return
-      
-      upload_target = parts[0]
-      password = parts[1]
-      
-      try:
-        validate_bulk_target(upload_target)
-        validate_bulk_password(password)
-      except ValueError as e:
-        await msg.reply(f"❌ {e}")
-        return
-      
-      if not msg.attachments:
-        await msg.reply("Please attach a JSON file to upload.")
-        return
-      
-      attachment = msg.attachments[0]
-      if not attachment.filename.endswith('.json'):
-        await msg.reply("File must be a JSON file (.json)")
-        return
-      
-      try:
-        # Download and parse JSON
-        file_content = await attachment.read()
-        data = json.loads(file_content.decode('utf-8'))
-        
-        # Upload based on target
-        if upload_target == "acro":
-          result = bulk_upload_acronyms(data)
-          await msg.reply(f"✅ Acronyms: {result}")
-        elif upload_target == "gamble":
-          result = bulk_upload_gamble(data)
-          await msg.reply(f"✅ Gamble: {result}")
-        
-        # Reload the data into memory
-        load_database()
-      except json.JSONDecodeError:
-        await msg.reply("❌ Invalid JSON file format.")
-      except ValueError as e:
-        await msg.reply(f"❌ Data validation error: {e}")
-      except Exception as e:
-        await msg.reply(f"❌ Upload failed: {e}")
-      return
-    
-    content_lower = msg.content.lower().strip()
-    matched_acronym = get_matching_acronym(content_lower)
-    if matched_acronym:
-      await msg.reply("The Big " + matched_acronym)
+  if await handle_summary_command(msg, content_lower):
+    return
 
-    if msg.content.startswith("acro"):
-      acro_input = msg.content[4:].lower().strip()
-      if acro_input in protected_acro_phrases:
-        await msg.reply("You can't acro bot commands.")
-      elif acro_input:
-        try:
-          created_acronym = acronym(acro_input)
-          await msg.reply(f"Acronym added: {created_acronym}")
-        except ValueError as e:
-          await msg.reply(str(e))
-      else:
-        await msg.reply("Usage: acro <word or phrase>")
+  if await handle_catgpt_chat_command(msg, content_lower):
+    return
 
-    if msg.content.startswith("unacro"):
-      acro_input = msg.content[6:].lower().strip()
-      if acro_input:
-        try:
-          removed = unacronym(acro_input)
-          if removed:
-            await msg.reply(f"Acronym removed: {acro_input}")
-          else:
-            await msg.reply("No acronym found for that word or phrase.")
-        except ValueError as e:
-          await msg.reply(str(e))
-      else:
-        await msg.reply("Usage: unacro <word or phrase>")
+  command = content_lower.split(maxsplit=1)[0] if content_lower else ""
 
-    if msg.content == "help":
-      await msg.reply(HELP_MESSAGE)
-    
-    if msg.content == "roll":
-      await msg.reply(game())
+  prefix_handlers = {
+    "lex": handle_lex_command,
+    "extract": handle_extract_command,
+    "upload": handle_upload_command,
+    "acro": lambda current_msg: handle_acro_command(current_msg, protected_acro_phrases),
+    "unacro": handle_unacro_command,
+    "bank": handle_bank_command,
+    "stim": handle_stim_command,
+  }
 
-    if msg.content.startswith("bank"):
-      parts = msg.content.split(maxsplit=1)
-      if len(parts) == 1:
-        target_user_id = msg.author.id
-      else:
-        target_user_id = resolve_stim_target_id(msg, parts[1])
-        if target_user_id is None:
-          await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
-          return
+  handler = prefix_handlers.get(command)
+  if handler and await handler(msg):
+    return
 
-      balance = get_user_balance(target_user_id)
-      await msg.reply(f"<@{target_user_id}> has ${balance}.")
+  matched_acronym = get_matching_acronym(content_lower)
+  if matched_acronym:
+    await msg.reply("The Big " + matched_acronym)
 
-    if msg.content.startswith("stim"):
-      parts = msg.content.split()
-      if len(parts) != 3:
-        await msg.reply("Usage: stim <username> <$amount>")
-        return
+  if await handle_exact_commands(msg, content_lower):
+    return
 
-      if msg.author.id != BLOUIS_ID:
-        await msg.reply("Only Blouis can use stim.")
-        return
-
-      _, username_arg, amount_arg = parts
-      target_user_id = resolve_stim_target_id(msg, username_arg)
-      if target_user_id is None:
-        await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
-        return
-
-      amount_text = amount_arg[1:] if amount_arg.startswith("$") else amount_arg
-      try:
-        amount = int(amount_text)
-      except ValueError:
-        await msg.reply("Amount must be an integer. Example: $100")
-        return
-
-      if amount == 0:
-        await msg.reply("Amount cannot be 0.")
-        return
-
-      balance = get_user_balance(target_user_id)
-      set_user_balance(target_user_id, balance + amount)
-      await msg.reply(f"big yahu gave u a stim check of ${amount}")
-      return
-
-    if msg.content == "gamble":
-      await send_gamble_panel(msg)
-
-    if msg.content in {"racer", "racers"}:
-      if msg.guild is None:
-        await msg.reply("Racers UI only works in a server.")
-      else:
-        await msg.reply(embed=build_racers_embed(msg.guild.id, msg.author.id, msg.author.display_name), view=RacersPanelView())
-      return
-    
-    if msg.content == "race":
-      if msg.guild is None:
-        await msg.reply("The race panel only works in a server.")
-      else:
-        await msg.reply(embed=build_race_embed(msg.guild.id), view=RacePanelView(msg.guild.id))
-
-    if msg.content == "race history":
-      if msg.guild is None:
-        await msg.reply("Race history only works in a server.")
-      else:
-        await msg.reply(embed=build_race_history_embed(msg.guild.id, 10), view=RaceHistoryView(msg.guild.id))
-      return
-    
-    if msg.content == "say hi":
-      await msg.reply(Something)
-  
-    if msg.content == "cat":
-      await msg.reply(Cat_Gif)
-     
-    if msg.content == "blouis":
-      await msg.reply(Blouis) 
-     
-    if msg.content == "redward":  
-      await msg.reply(Redward) 
-    
-    if any(word in msg.content for word in skulls):
-      emoji = discord.utils.get(msg.guild.emojis, name='tetoaddressme')
-      if emoji:
-        await msg.add_reaction(emoji)
-      else:
-        await msg.add_reaction(':skull:')
-  
-    if any(word in msg.content for word in meow):
-      await msg.reply(meowSeparate(msg.content)) 
+  await handle_passive_reactions(msg)
 
 try:
   init_db()

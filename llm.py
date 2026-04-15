@@ -35,3 +35,33 @@ async def chat(msg):
   except Exception as e:
     print(f"Error: {e}")
     return "Merrorr: Something went mwrong mmmmmm"
+
+
+async def summarize_text(text):
+  global api_request_counter
+  api_request_counter += 1
+  print(f"API Request Count: {api_request_counter}")
+
+  try:
+    system_prompt = (
+      "You are CatGPT. Summarize the user's provided Discord message in a clear, concise way. "
+      "Keep it under 120 words. Preserve key facts, names, and numbers. "
+      "Use 2-5 bullet points, and keep a light cat-like tone without adding fake details."
+    )
+
+    response = catClient.chat.completions.create(
+      model="gpt-5.2",
+      messages=[
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": text}
+      ]
+    )
+
+    assistant_message = response.choices[0].message.content
+    await asyncio.sleep(1)
+
+    return assistant_message
+
+  except Exception as e:
+    print(f"Error: {e}")
+    return "Merrorr: I couldn't summarize that right meow."
