@@ -20,7 +20,7 @@ async def chat(msg):
     system_prompt = "Make the response sound like a cat replied and do not exceed 200 words under any circumstance."
 
     response = catClient.chat.completions.create(
-      model="gpt-4o",
+      model="gpt-5.2",
       messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message}

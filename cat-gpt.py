@@ -129,11 +129,12 @@ def resolve_stim_target_id(msg, username_arg):
 
 @client.event
 async def on_message(msg):
+  if msg.author == client.user:
+    return
+
   if msg.content.startswith("catgpt"):
       await msg.reply(await chat(msg))
   else: 
-    if msg.author == client.user:
-      return 
     if msg.content.startswith("lex"):
       await msg.reply(alphabetize(msg.content[3:]))
 
