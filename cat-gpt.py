@@ -25,8 +25,6 @@ bot = commands.Bot(command_prefix="", intents = intents)
 client.add_view(RacePanelView())
 client.add_view(RacersPanelView())
 
-global_count = 0
-
 def load_database():
   load_gamble_database()
   load_acronym_database()
@@ -42,7 +40,6 @@ async def on_ready():
 Something = "Hi, I am Catgpt, I respond in meows"
 meow = ['meow']
 Cat_Gif = "https://tenor.com/view/cat-meow-fat-augh-gif-24948731"
-WithoutMe = ['shower', 'bed','sleep','kms', 'kill myself']
 BLOUIS_ID = int(os.getenv("BLOUIS_ID") or "0")
 Blouis = "https://media.discordapp.net/attachments/1167731497134985239/1350984991521378455/blouis.png?ex=67da0bd2&is=67d8ba52&hm=137da4b3c04b2aed10ef63a460142ac89999cf6dd84308031a822592eaff4121&=&format=webp&quality=lossless&width=880&height=1174"
 Redward = "https://media.discordapp.net/attachments/1167182348664709256/1351370224133472408/IMG_4161.jpg?ex=67da2118&is=67d8cf98&hm=1d3f5982cef9f011aee2f2dcd2d67fc8af18103d5f274414c2acdd108544ee6d&=&format=webp&width=880&height=1172"
@@ -59,7 +56,6 @@ protected_acro_phrases = {
     "unacro",
     "extract",
     "upload",
-    "count",
     "roll",
     "bank",
     "stim",
@@ -81,7 +77,6 @@ HELP_MESSAGE = (
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
   "- `extract <acro|gamble> <password>`: Exports MongoDB data as a JSON attachment.\n"
   "- `upload <acro|gamble> <password>`: Bulk imports data from JSON file (attach file).\n"
-  "- `count`: Increases and shows the current counter.\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
   "- `bank [username]`: Shows your balance or another user's balance.\n"
   "- `stim <username> <$amount>`: Adds money to a user's balance (Blouis only).\n"
@@ -99,30 +94,13 @@ HELP_MESSAGE = (
 
 def alphabetize(word):
     lower_case = word.lower()
-    for letter in lower_case:
-      if letter in alpha.keys():
-        alpha[letter] += 1
+    word = list(lower_case)
+    word.sort()
+    return ''.join(word)
 
-    ret = ""
-    for letter in alpha:
-        ret += letter * alpha[letter]
-
-    for letter in alpha:
-        alpha[letter] = 0
-  
-    return ret
-  
 def game():
   sum = random.randint(1,1000)
   return sum
-
-def counter():
-  try:
-    global global_count 
-    global_count += 1
-    return global_count
-  except Exception as e:
-    return "bro how did u run into this error :skull:"
 
 def meowSeparate(msg):
   return msg.replace("meow", "**meow**")
@@ -266,13 +244,10 @@ async def on_message(msg):
       else:
         await msg.reply("Usage: unacro <word or phrase>")
 
-    if msg.content.startswith("help"):
+    if msg.content == "help":
       await msg.reply(HELP_MESSAGE)
     
-    if msg.content.startswith("count"):
-      await msg.reply(counter())
-  
-    if msg.content.startswith("roll"):
+    if msg.content == "roll":
       await msg.reply(game())
 
     if msg.content.startswith("bank"):
@@ -320,7 +295,7 @@ async def on_message(msg):
       await msg.reply(f"big yahu gave u a stim check of ${amount}")
       return
 
-    if msg.content.startswith("gamble"):
+    if msg.content == "gamble":
       await send_gamble_panel(msg)
 
     if msg.content in {"racer", "racers"}:
@@ -343,20 +318,20 @@ async def on_message(msg):
         await msg.reply(embed=build_race_history_embed(msg.guild.id, 10), view=RaceHistoryView(msg.guild.id))
       return
     
-    if msg.content.startswith("say hi"):
+    if msg.content == "say hi":
       await msg.reply(Something)
   
-    if msg.content.startswith("cat"):
+    if msg.content == "cat":
       await msg.reply(Cat_Gif)
      
-    if msg.content.startswith("blouis"):
+    if msg.content == "blouis":
       await msg.reply(Blouis) 
      
-    if msg.content.startswith("redward"):  
+    if msg.content == "redward":  
       await msg.reply(Redward) 
     
     if any(word in msg.content for word in skulls):
-      emoji = discord.utils.get(msg.guild.emojis, name='worstpainpossible')
+      emoji = discord.utils.get(msg.guild.emojis, name='tetoaddressme')
       if emoji:
         await msg.add_reaction(emoji)
       else:
@@ -364,9 +339,6 @@ async def on_message(msg):
   
     if any(word in msg.content for word in meow):
       await msg.reply(meowSeparate(msg.content)) 
-  
-    if any(word in msg.content for word in WithoutMe):
-      await msg.reply("without me? :pleading_face:") 
 
 try:
   init_db()

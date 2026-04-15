@@ -423,9 +423,14 @@ class Race:
         dnfs.sort(key=lambda r: (-r.position, r.turns_taken, r.name.lower()))
 
         rows = []
+        current_rank = 0
+        previous_turns = None
         for idx, racer in enumerate(finishers, start=1):
+            if previous_turns is None or racer.turns_taken != previous_turns:
+                current_rank = idx
+                previous_turns = racer.turns_taken
             rows.append({
-                'rank': idx,
+                'rank': current_rank,
                 'name': racer.name,
                 'owner_id': racer.owner_id,
                 'status': 'FINISHED',
