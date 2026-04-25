@@ -19,6 +19,19 @@ racers_collection = db['racers']
 race_history_collection = db['race_history']
 
 
+BULK_TARGET_ALIASES = {
+  'acro': 'acro',
+  'acronym': 'acro',
+  'acronyms': 'acro',
+  'gamble': 'gamble',
+  'balances': 'balances',
+  'balance': 'balances',
+  'racers': 'racers',
+  'race_history': 'race_history',
+  'racehistory': 'race_history',
+}
+
+
 def init_db():
   """Initialize database indexes for better query performance."""
   try:
@@ -142,14 +155,19 @@ def validate_bulk_password(provided_password):
 
 
 def validate_bulk_target(target):
-  """Validate bulk operation target (acro or gamble). Raises ValueError if invalid."""
-  if target not in ("acro", "gamble"):
-    raise ValueError("Invalid target. Use 'acro' or 'gamble'.")
-  return True
+  """Normalize and validate bulk operation target. Raises ValueError if invalid."""
+  normalized = str(target).strip().lower()
+  canonical = BULK_TARGET_ALIASES.get(normalized)
+  if canonical is None:
+    allowed = "acro, gamble, balances, racers, race_history"
+    raise ValueError(f"Invalid target. Use one of: {allowed}.")
+  return canonical
 
 
 def extract_collection_json(target):
   """Export the requested collection as formatted JSON and return content with filename."""
+  target = validate_bulk_target(target)
+
   if target == "acro":
     docs = list(acronym_collection.find({}, {"_id": 0, "phrase": 1, "acronym": 1}))
     formatted = {}
@@ -171,7 +189,19 @@ def extract_collection_json(target):
       formatted[str(user_id)] = player_data
     return json.dumps(formatted, indent=2, ensure_ascii=False), "gamble_export.json"
 
-  raise ValueError("Unsupported target. Use 'acro' or 'gamble'.")
+  if target == "balances":
+    docs = list(balance_collection.find({}, {"_id": 0}))
+    return json.dumps(docs, indent=2, ensure_ascii=False), "balances_export.json"
+
+  if target == "racers":
+    docs = list(racers_collection.find({}, {"_id": 0}))
+    return json.dumps(docs, indent=2, ensure_ascii=False), "racers_export.json"
+
+  if target == "race_history":
+    docs = list(race_history_collection.find({}, {"_id": 0}))
+    return json.dumps(docs, indent=2, ensure_ascii=False), "race_history_export.json"
+
+  raise ValueError("Unsupported target.")
 
 
 def validate_acronym_data(data):
@@ -216,6 +246,72 @@ def validate_gamble_data(data):
     if "last_amount_change" in player_data and not isinstance(player_data["last_amount_change"], (int, float)):
       raise ValueError(f"Last amount change for user {user_id} must be a number, got: {type(player_data['last_amount_change'])}")
   
+  return True
+
+
+def validate_balance_data(data):
+  """Validate balances JSON structure.
+
+  Accepted:
+  - [{user_id, money, ...optional fields...}, ...]
+  - {user_id: {money: <number>, ...optional fields...}, ...}
+  """
+  if isinstance(data, list):
+    for row in data:
+      if not isinstance(row, dict):
+        raise ValueError("Each balances row must be an object.")
+      user_id = row.get("user_id")
+      if user_id is None or not str(user_id).strip().isdigit():
+        raise ValueError(f"Balances row missing valid user_id: {row}")
+      if "money" in row and (not isinstance(row["money"], (int, float)) or row["money"] < 1):
+        raise ValueError(f"Balances row has invalid money value: {row}")
+    return True
+
+  if isinstance(data, dict):
+    for user_id, row in data.items():
+      if not str(user_id).isdigit():
+        raise ValueError(f"Balances key user_id must be digits, got: {user_id}")
+      if not isinstance(row, dict):
+        raise ValueError(f"Balances data for user {user_id} must be an object.")
+      money = row.get("money")
+      if money is None:
+        raise ValueError(f"Balances data for user {user_id} must include money.")
+      if not isinstance(money, (int, float)) or money < 1:
+        raise ValueError(f"Balances money for user {user_id} must be >= 1.")
+    return True
+
+  raise ValueError("Balances data must be either a JSON array or object.")
+
+
+def validate_racers_data(data):
+  """Validate racers JSON structure. Expected: [{guild_id, racer_id, ...}, ...]"""
+  if not isinstance(data, list):
+    raise ValueError("Racers data must be a JSON array of racer records.")
+
+  for row in data:
+    if not isinstance(row, dict):
+      raise ValueError("Each racers row must be an object.")
+    if not str(row.get("guild_id", "")).strip():
+      raise ValueError(f"Racers row missing guild_id: {row}")
+    if not str(row.get("racer_id", "")).strip():
+      raise ValueError(f"Racers row missing racer_id: {row}")
+
+  return True
+
+
+def validate_race_history_data(data):
+  """Validate race history JSON structure. Expected: [{guild_id, race_signature, ...}, ...]"""
+  if not isinstance(data, list):
+    raise ValueError("Race history data must be a JSON array of race records.")
+
+  for row in data:
+    if not isinstance(row, dict):
+      raise ValueError("Each race history row must be an object.")
+    if not str(row.get("guild_id", "")).strip():
+      raise ValueError(f"Race history row missing guild_id: {row}")
+    if not str(row.get("race_signature", "")).strip():
+      raise ValueError(f"Race history row missing race_signature: {row}")
+
   return True
 
 
@@ -270,3 +366,113 @@ def bulk_upload_gamble(data):
     return f"Successfully uploaded {len(data)} players (Inserted: {inserted}, Updated: {updated})"
   except Exception as e:
     raise Exception(f"Error uploading gamble data: {e}")
+
+
+def bulk_upload_balances(data):
+  """Bulk upload balances data."""
+  validate_balance_data(data)
+
+  inserted = 0
+  updated = 0
+  try:
+    if isinstance(data, dict):
+      items = []
+      for user_id, row in data.items():
+        items.append({'user_id': str(user_id), **row})
+    else:
+      items = data
+
+    for row in items:
+      user_id = str(row.get('user_id')).strip()
+      doc = {k: v for k, v in row.items() if k != '_id'}
+      doc['user_id'] = user_id
+
+      if 'guild_id' in doc and str(doc.get('guild_id')).strip():
+        doc['guild_id'] = str(doc['guild_id'])
+        query = {'guild_id': doc['guild_id'], 'user_id': user_id}
+      else:
+        query = {'user_id': user_id}
+
+      result = balance_collection.update_one(query, {'$set': doc}, upsert=True)
+      if result.upserted_id:
+        inserted += 1
+      else:
+        updated += 1
+
+    return f"Successfully uploaded {len(items)} balances (Inserted: {inserted}, Updated: {updated})"
+  except Exception as e:
+    raise Exception(f"Error uploading balances data: {e}")
+
+
+def bulk_upload_racers(data):
+  """Bulk upload racers data. Data format: [{guild_id, racer_id, ...}, ...]"""
+  validate_racers_data(data)
+
+  inserted = 0
+  updated = 0
+  try:
+    for row in data:
+      guild_id = str(row.get('guild_id')).strip()
+      racer_id = str(row.get('racer_id')).strip()
+      doc = {k: v for k, v in row.items() if k != '_id'}
+      doc['guild_id'] = guild_id
+      doc['racer_id'] = racer_id
+
+      result = racers_collection.update_one(
+        {'guild_id': guild_id, 'racer_id': racer_id},
+        {'$set': doc},
+        upsert=True
+      )
+      if result.upserted_id:
+        inserted += 1
+      else:
+        updated += 1
+
+    return f"Successfully uploaded {len(data)} racers (Inserted: {inserted}, Updated: {updated})"
+  except Exception as e:
+    raise Exception(f"Error uploading racers data: {e}")
+
+
+def bulk_upload_race_history(data):
+  """Bulk upload race history data. Data format: [{guild_id, race_signature, ...}, ...]"""
+  validate_race_history_data(data)
+
+  inserted = 0
+  updated = 0
+  try:
+    for row in data:
+      guild_id = str(row.get('guild_id')).strip()
+      race_signature = str(row.get('race_signature')).strip()
+      doc = {k: v for k, v in row.items() if k != '_id'}
+      doc['guild_id'] = guild_id
+      doc['race_signature'] = race_signature
+
+      result = race_history_collection.update_one(
+        {'guild_id': guild_id, 'race_signature': race_signature},
+        {'$set': doc},
+        upsert=True
+      )
+      if result.upserted_id:
+        inserted += 1
+      else:
+        updated += 1
+
+    return f"Successfully uploaded {len(data)} race history records (Inserted: {inserted}, Updated: {updated})"
+  except Exception as e:
+    raise Exception(f"Error uploading race history data: {e}")
+
+
+def bulk_upload_collection(target, data):
+  """Dispatch bulk upload by target key."""
+  canonical = validate_bulk_target(target)
+  if canonical == 'acro':
+    return bulk_upload_acronyms(data)
+  if canonical == 'gamble':
+    return bulk_upload_gamble(data)
+  if canonical == 'balances':
+    return bulk_upload_balances(data)
+  if canonical == 'racers':
+    return bulk_upload_racers(data)
+  if canonical == 'race_history':
+    return bulk_upload_race_history(data)
+  raise ValueError(f"Unsupported upload target: {canonical}")

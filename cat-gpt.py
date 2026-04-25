@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from gamble import send_gamble_panel, load_gamble_database, save_gamble_database
 from acronym import acronym, unacronym, load_acronym_database, save_acronym_database, get_matching_acronym
 from llm import chat, summarize_text
-from db import init_db, close_db, extract_collection_json, bulk_upload_acronyms, bulk_upload_gamble, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
+from db import init_db, close_db, extract_collection_json, bulk_upload_collection, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
 from race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
 from racer_ui import RacersPanelView, build_racers_embed
 
@@ -77,8 +77,8 @@ HELP_MESSAGE = (
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
-  "- `extract <acro|gamble> <password>`: Exports MongoDB data as a JSON attachment.\n"
-  "- `upload <acro|gamble> <password>`: Bulk imports data from JSON file (attach file).\n"
+  "- `extract <target> <password>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`).\n"
+  "- `upload <target> <password>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`).\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
   "- `bank [username]`: Shows your balance or another user's balance.\n"
   "- `stim <username> <$amount>`: Adds money to a user's balance (Blouis only).\n"
@@ -174,14 +174,14 @@ async def handle_extract_command(msg):
 
   parts = msg.content[7:].lower().strip().split()
   if len(parts) < 2:
-    await msg.reply("Usage: extract <acro|gamble> <password>")
+    await msg.reply("Usage: extract <target> <password> (targets: acro, gamble, balances, racers, race_history)")
     return True
 
   extract_target = parts[0]
   password = parts[1]
 
   try:
-    validate_bulk_target(extract_target)
+    extract_target = validate_bulk_target(extract_target)
     validate_bulk_password(password)
   except ValueError as e:
     await msg.reply(f"❌ {e}")
@@ -205,14 +205,14 @@ async def handle_upload_command(msg):
 
   parts = msg.content[6:].lower().strip().split()
   if len(parts) < 2:
-    await msg.reply("Usage: upload <acro|gamble> <password> (with JSON file attachment)")
+    await msg.reply("Usage: upload <target> <password> (targets: acro, gamble, balances, racers, race_history; attach JSON)")
     return True
 
   upload_target = parts[0]
   password = parts[1]
 
   try:
-    validate_bulk_target(upload_target)
+    upload_target = validate_bulk_target(upload_target)
     validate_bulk_password(password)
   except ValueError as e:
     await msg.reply(f"❌ {e}")
@@ -231,12 +231,8 @@ async def handle_upload_command(msg):
     file_content = await attachment.read()
     data = json.loads(file_content.decode('utf-8'))
 
-    if upload_target == "acro":
-      result = bulk_upload_acronyms(data)
-      await msg.reply(f"✅ Acronyms: {result}")
-    elif upload_target == "gamble":
-      result = bulk_upload_gamble(data)
-      await msg.reply(f"✅ Gamble: {result}")
+    result = bulk_upload_collection(upload_target, data)
+    await msg.reply(f"✅ {upload_target}: {result}")
 
     load_database()
   except json.JSONDecodeError:
