@@ -5,7 +5,7 @@ from collections import Counter
 import discord
 from discord.ext import commands
 from gamble_ui import build_gamble_embed, GambleView
-from db import gamble_collection, get_user_balance, set_user_balance
+from db import gamble_collection, get_user_balance, set_user_balance, get_gamble_leaderboard
 
 roulette_doubler = {}  # In-memory cache of player data
 message_cooldown = commands.CooldownMapping.from_cooldown(1.0, 4.0, commands.BucketType.user)
@@ -101,6 +101,7 @@ def _normalize_player_data(player_data):
     last_multiplier = str(player_data.get("last_multiplier", "N/A"))
     next_pull = player_data.get("next_pull")
     next_pull_revealed = bool(player_data.get("next_pull_revealed", False))
+    guild_ids = player_data.get("guild_ids", [])
   else:
     name = "Unknown"
     win_streak = 0
@@ -108,6 +109,7 @@ def _normalize_player_data(player_data):
     last_multiplier = "N/A"
     next_pull = None
     next_pull_revealed = False
+    guild_ids = []
 
   try:
     win_streak = int(win_streak)
@@ -122,13 +124,25 @@ def _normalize_player_data(player_data):
   except (TypeError, ValueError):
     last_amount_change = 0
 
+  if not isinstance(guild_ids, list):
+    guild_ids = []
+
+  normalized_guild_ids = []
+  seen = set()
+  for guild_id in guild_ids:
+    gid = str(guild_id).strip()
+    if gid and gid not in seen:
+      normalized_guild_ids.append(gid)
+      seen.add(gid)
+
   return {
     "name": name,
     "win_streak": win_streak,
     "last_amount_change": last_amount_change,
     "last_multiplier": last_multiplier,
     "next_pull": next_pull if next_pull in OUTCOME_LABELS else None,
-    "next_pull_revealed": next_pull_revealed if next_pull in OUTCOME_LABELS else False
+    "next_pull_revealed": next_pull_revealed if next_pull in OUTCOME_LABELS else False,
+    "guild_ids": normalized_guild_ids,
   }
 
 
@@ -153,7 +167,7 @@ def save_gamble_database(path="./databases/gambling.json"):
   try:
     for user_id, player_data in roulette_doubler.items():
       set_user_balance(user_id, player_data.get("money", 1))
-      doc_payload = {k: v for k, v in player_data.items() if k != "money"}
+      doc_payload = {k: v for k, v in player_data.items() if k not in ("money", "guild_id")}
       doc_payload['user_id'] = str(user_id)
       gamble_collection.update_one(
         {'user_id': str(user_id)},
@@ -202,9 +216,10 @@ class _CooldownContext:
     self.author = user
 
 
-def _get_or_create_player(user_id, user_name):
+def _get_or_create_player(guild_id, user_id, user_name):
   """Get or create a player, fetching from MongoDB if not in cache."""
-  if user_id not in roulette_doubler:
+  uid = int(user_id)
+  if uid not in roulette_doubler:
     # Try to load from MongoDB first
     try:
       db_player = gamble_collection.find_one({'user_id': str(user_id)})
@@ -230,12 +245,20 @@ def _get_or_create_player(user_id, user_name):
         "next_pull_revealed": False
       }
     player["money"] = get_user_balance(user_id)
-    roulette_doubler[user_id] = player
+    roulette_doubler[uid] = player
   else:
-    roulette_doubler[user_id]["name"] = user_name
-    roulette_doubler[user_id]["money"] = get_user_balance(user_id)
+    roulette_doubler[uid]["name"] = user_name
+    roulette_doubler[uid]["money"] = get_user_balance(user_id)
 
-  player = roulette_doubler[user_id]
+  normalized_gid = str(guild_id)
+  guild_ids = roulette_doubler[uid].get("guild_ids", [])
+  if not isinstance(guild_ids, list):
+    guild_ids = []
+  if normalized_gid not in guild_ids:
+    guild_ids.append(normalized_gid)
+  roulette_doubler[uid]["guild_ids"] = guild_ids
+
+  player = roulette_doubler[uid]
   if player["money"] < 1:
     player["money"] = 1
   if "win_streak" not in player or player["win_streak"] < 0:
@@ -248,6 +271,8 @@ def _get_or_create_player(user_id, user_name):
     player["next_pull"] = None
   if "next_pull_revealed" not in player:
     player["next_pull_revealed"] = False
+  if "guild_ids" not in player or not isinstance(player["guild_ids"], list):
+    player["guild_ids"] = [normalized_gid]
   if not player["next_pull"]:
     player["next_pull_revealed"] = False
   return player
@@ -271,7 +296,7 @@ def _create_gamble_view():
 
 
 async def _send_or_refresh_panel_from_interaction(interaction, panel_message=None):
-  player = _get_or_create_player(interaction.user.id, interaction.user.display_name)
+  player = _get_or_create_player(interaction.guild_id, interaction.user.id, interaction.user.display_name)
   target_message = panel_message or getattr(interaction, "message", None)
 
   if target_message:
@@ -291,19 +316,20 @@ async def _send_or_refresh_panel_from_interaction(interaction, panel_message=Non
 
 async def process_gamble_interaction(interaction, wager_input, panel_message=None):
   global roulette_doubler
+  guild_id = str(interaction.guild_id)
   user_id = interaction.user.id
   user_name = interaction.user.display_name
-  player = _get_or_create_player(user_id, user_name)
+  player = _get_or_create_player(guild_id, user_id, user_name)
   
   # Save to MongoDB after getting/creating player
   def _save_player_to_db():
     try:
       set_user_balance(user_id, player.get("money", 1))
-      player_data = {k: v for k, v in player.items() if k != "money"}
+      player_data = {k: v for k, v in player.items() if k not in ("money", "guild_ids")}
       player_data['user_id'] = str(user_id)
       gamble_collection.update_one(
         {'user_id': str(user_id)},
-        {'$set': player_data},
+        {'$set': player_data, '$addToSet': {'guild_ids': guild_id}},
         upsert=True
       )
     except Exception as e:
@@ -381,7 +407,7 @@ async def _handle_gamble_all(interaction):
 
 
 async def _handle_leaderboard(interaction):
-  await interaction.response.send_message(gamble_leaderboard())
+  await interaction.response.send_message(gamble_leaderboard(interaction.guild_id))
 
 
 async def _handle_pool_left(interaction):
@@ -389,7 +415,8 @@ async def _handle_pool_left(interaction):
 
 
 async def _handle_scry(interaction):
-  player = _get_or_create_player(interaction.user.id, interaction.user.display_name)
+  guild_id = str(interaction.guild_id)
+  player = _get_or_create_player(guild_id, interaction.user.id, interaction.user.display_name)
   if player["money"] < 15:
     await interaction.response.send_message("You need at least 15 balance to scry the next pull.", ephemeral=True)
     return
@@ -411,11 +438,11 @@ async def _handle_scry(interaction):
   # Save to MongoDB
   try:
     set_user_balance(interaction.user.id, player.get("money", 1))
-    player_data = {k: v for k, v in player.items() if k != "money"}
+    player_data = {k: v for k, v in player.items() if k not in ("money", "guild_ids")}
     player_data['user_id'] = str(interaction.user.id)
     gamble_collection.update_one(
       {'user_id': str(interaction.user.id)},
-      {'$set': player_data},
+      {'$set': player_data, '$addToSet': {'guild_ids': guild_id}},
       upsert=True
     )
   except Exception as e:
@@ -426,7 +453,8 @@ async def _handle_scry(interaction):
 
 
 async def _handle_reroll(interaction):
-  player = _get_or_create_player(interaction.user.id, interaction.user.display_name)
+  guild_id = str(interaction.guild_id)
+  player = _get_or_create_player(guild_id, interaction.user.id, interaction.user.display_name)
   if player["money"] < 10:
     await interaction.response.send_message("You need at least 10 balance to reroll your next pull.", ephemeral=True)
     return
@@ -443,11 +471,11 @@ async def _handle_reroll(interaction):
   # Save to MongoDB
   try:
     set_user_balance(interaction.user.id, player.get("money", 1))
-    player_data = {k: v for k, v in player.items() if k != "money"}
+    player_data = {k: v for k, v in player.items() if k not in ("money", "guild_ids")}
     player_data['user_id'] = str(interaction.user.id)
     gamble_collection.update_one(
       {'user_id': str(interaction.user.id)},
-      {'$set': player_data},
+      {'$set': player_data, '$addToSet': {'guild_ids': guild_id}},
       upsert=True
     )
   except Exception as e:
@@ -458,7 +486,10 @@ async def _handle_reroll(interaction):
 
 
 async def send_gamble_panel(msg):
-  player = _get_or_create_player(msg.author.id, msg.author.display_name)
+  if msg.guild is None:
+    await msg.reply("Gamble only works in a server.")
+    return
+  player = _get_or_create_player(msg.guild.id if msg.guild else None, msg.author.id, msg.author.display_name)
   panel_text = "Welcome to the Catgpt Gamble Game! Use the buttons below to start gambling." if player["money"] == 1 else "Welcome back to the Catgpt Gamble Game! Use the buttons below to keep gambling."
   await msg.reply(panel_text, embed=_build_gamble_embed(player), view=_create_gamble_view())
 
@@ -467,25 +498,21 @@ async def roulette(msg):
   await send_gamble_panel(msg)
 
 
-def gamble_leaderboard(limit=10):
-  if not roulette_doubler:
+def gamble_leaderboard(guild_id, limit=10):
+  guild_players = get_gamble_leaderboard(guild_id, limit)
+
+  if not guild_players:
     return "No gambling records yet."
 
-  sorted_players = sorted(
-    roulette_doubler.items(),
-    key=lambda entry: entry[1]["money"],
-    reverse=True
-  )[:limit]
-
   lines = ["🏆 Gamble Leaderboard"]
-  for rank, (_, player_data) in enumerate(sorted_players, start=1):
+  for rank, player_data in enumerate(guild_players, start=1):
     lines.append(f"{rank}. {player_data['name']} - {player_data['money']}")
 
   return "\n".join(lines)
 
 
-def gamble_balance(user_id):
-  return get_user_balance(user_id)
+def gamble_balance(guild_id, user_id):
+  return get_user_balance(guild_id, user_id)
 
 
 def gamble_pool_pulls_left():

@@ -4,8 +4,6 @@ import io
 import json
 import discord
 import random
-from flask import Flask, request, jsonify
-from flask_cors import CORS
 from discord.ext import commands
 from dotenv import load_dotenv
 from gamble import send_gamble_panel, load_gamble_database, save_gamble_database
@@ -77,8 +75,8 @@ HELP_MESSAGE = (
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
-  "- `extract <target> <password>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`).\n"
-  "- `upload <target> <password>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`).\n"
+  "- `extract <target>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
+  "- `upload <target>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
   "- `bank [username]`: Shows your balance or another user's balance.\n"
   "- `stim <username> <$amount>`: Adds money to a user's balance (Blouis only).\n"
@@ -173,16 +171,15 @@ async def handle_extract_command(msg):
     return False
 
   parts = msg.content[7:].lower().strip().split()
-  if len(parts) < 2:
-    await msg.reply("Usage: extract <target> <password> (targets: acro, gamble, balances, racers, race_history)")
+  if len(parts) < 1:
+    await msg.reply("Usage: extract <target> (targets: acro, gamble, balances, racers, race_history)")
     return True
 
   extract_target = parts[0]
-  password = parts[1]
 
   try:
     extract_target = validate_bulk_target(extract_target)
-    validate_bulk_password(password)
+    validate_bulk_password(msg.author.id)
   except ValueError as e:
     await msg.reply(f"❌ {e}")
     return True
@@ -204,16 +201,15 @@ async def handle_upload_command(msg):
     return False
 
   parts = msg.content[6:].lower().strip().split()
-  if len(parts) < 2:
-    await msg.reply("Usage: upload <target> <password> (targets: acro, gamble, balances, racers, race_history; attach JSON)")
+  if len(parts) < 1:
+    await msg.reply("Usage: upload <target> (targets: acro, gamble, balances, racers, race_history; attach JSON)")
     return True
 
   upload_target = parts[0]
-  password = parts[1]
 
   try:
     upload_target = validate_bulk_target(upload_target)
-    validate_bulk_password(password)
+    validate_bulk_password(msg.author.id)
   except ValueError as e:
     await msg.reply(f"❌ {e}")
     return True
@@ -248,12 +244,16 @@ async def handle_acro_command(msg, protected_phrases):
   if not msg.content.startswith("acro"):
     return False
 
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
   acro_input = msg.content[4:].lower().strip()
   if acro_input in protected_phrases:
     await msg.reply("You can't acro bot commands.")
   elif acro_input:
     try:
-      created_acronym = acronym(acro_input)
+      created_acronym = acronym(str(msg.guild.id), acro_input)
       await msg.reply(f"Acronym added: {created_acronym}")
     except ValueError as e:
       await msg.reply(str(e))
@@ -266,10 +266,14 @@ async def handle_unacro_command(msg):
   if not msg.content.startswith("unacro"):
     return False
 
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
   acro_input = msg.content[6:].lower().strip()
   if acro_input:
     try:
-      removed = unacronym(acro_input)
+      removed = unacronym(str(msg.guild.id), acro_input)
       if removed:
         await msg.reply(f"Acronym removed: {acro_input}")
       else:
@@ -284,7 +288,6 @@ async def handle_unacro_command(msg):
 async def handle_bank_command(msg):
   if not msg.content.startswith("bank"):
     return False
-
   parts = msg.content.split(maxsplit=1)
   if len(parts) == 1:
     target_user_id = msg.author.id
@@ -420,7 +423,7 @@ async def on_message(msg):
   if handler and await handler(msg):
     return
 
-  matched_acronym = get_matching_acronym(content_lower)
+  matched_acronym = get_matching_acronym(str(msg.guild.id), content_lower) if msg.guild else None
   if matched_acronym:
     await msg.reply("The Big " + matched_acronym)
 
