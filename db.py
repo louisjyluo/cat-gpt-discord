@@ -289,6 +289,38 @@ def validate_gamble_data(data):
 
     if "last_amount_change" in row and not isinstance(row["last_amount_change"], (int, float)):
       raise ValueError(f"Last amount change for user {user_id} must be a number, got: {type(row['last_amount_change'])}")
+
+    if "gambler_stars" in row:
+      stars = row["gambler_stars"]
+      if not isinstance(stars, int) or stars < 0:
+        raise ValueError(f"gambler_stars for user {user_id} must be an integer >= 0, got: {stars}")
+
+    if "ascension_abilities" in row:
+      abilities = row["ascension_abilities"]
+      if not isinstance(abilities, dict):
+        raise ValueError(f"ascension_abilities for user {user_id} must be an object, got: {type(abilities)}")
+
+      def _bounded_int(key, min_value, max_value):
+        if key not in abilities:
+          return
+        value = abilities[key]
+        if not isinstance(value, int) or value < min_value or value > max_value:
+          raise ValueError(
+            f"ascension_abilities.{key} for user {user_id} must be int {min_value}-{max_value}, got: {value}"
+          )
+
+      _bounded_int("foundation", 0, 5)
+      _bounded_int("fickle", 0, 2)
+      _bounded_int("influence", 0, 3)
+      _bounded_int("heavy_die", 0, 3)
+      _bounded_int("sage", 0, 3)
+      _bounded_int("passion", 0, 3)
+
+      for flag_key in ("unbounded", "blessed", "greed"):
+        if flag_key in abilities and not isinstance(abilities[flag_key], bool):
+          raise ValueError(
+            f"ascension_abilities.{flag_key} for user {user_id} must be boolean, got: {abilities[flag_key]}"
+          )
   
   return True
 
