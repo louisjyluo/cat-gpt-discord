@@ -62,3 +62,16 @@ SPECIAL_EVENT_WEIGHTS = {
 }
 
 REROLL_COST_PERCENT = 15.0
+
+OUTCOME_LABELS = {
+  "JACKPOT_10X": "10x Jackpot",
+  "TRIPLE_WIN": "Triple Win",
+  "DOUBLE_WIN": "Double Win",
+  "LOSE_ALL": "Lose All",
+  "TRIPLE_LOSS": "Triple Loss",
+  "DOUBLE_LOSS": "Double Loss",
+  "SINGLE_WIN": "Single Win",
+  "SINGLE_LOSS": "Single Loss",
+}
+
+ASCEND_COST = 100_000

@@ -3,10 +3,12 @@ import math
 import time
 from gamble_constants import (
   ABILITY_LIMITS,
+  ASCEND_COST,
   FOUNDATION_BASE_BALANCE_BY_LEVEL,
   FICKLE_EVENT_BONUS_PERCENT_BY_LEVEL,
   HEAVY_DIE_SINGLE_WIN_RATIO_BY_LEVEL,
   INFLUENCE_SPECIAL_EVENT_GOOD_RATIO_BY_LEVEL,
+  OUTCOME_LABELS,
   PASSION_GAMBLE_COOLDOWN_SECONDS_BY_LEVEL,
   REROLL_COST_PERCENT,
   SCRY_COST_BY_SAGE,
@@ -27,19 +29,6 @@ from db import gamble_collection, get_user_balance, set_user_balance, get_gamble
 roulette_doubler = {}  # In-memory cache of player data
 last_gamble_at = {}
 
-OUTCOME_LABELS = {
-  "JACKPOT_10X": "10x Jackpot",
-  "TRIPLE_WIN": "Triple Win",
-  "DOUBLE_WIN": "Double Win",
-  "LOSE_ALL": "Lose All",
-  "TRIPLE_LOSS": "Triple Loss",
-  "DOUBLE_LOSS": "Double Loss",
-  "SINGLE_WIN": "Single Win",
-  "SINGLE_LOSS": "Single Loss",
-}
-
-ASCEND_COST = 1_000_000
-
 def _get_gamble_cooldown_seconds(player):
   abilities = _get_effective_abilities(player)
   passion_level = int(abilities.get("passion", 0) or 0)
@@ -47,7 +36,7 @@ def _get_gamble_cooldown_seconds(player):
 
 
 def _get_ascend_stars(current_money):
-  return max(0, int(math.log10(max(1, int(current_money))) - 5))
+  return max(0, int(math.log10(max(1, int(current_money))) - 4))
 
 
 def _get_scry_cost_percent(player):
