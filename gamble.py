@@ -852,7 +852,7 @@ async def _handle_reroll(interaction):
     return
 
   abilities = _get_effective_abilities(player)
-  ratio = REROLL_COST_PERCENT
+  ratio = REROLL_COST_PERCENT / 100.0
   if bool(abilities.get("unbounded", False)):
     ratio = ratio / 2.0
   cost = _percent_cost(player["money"], ratio)
