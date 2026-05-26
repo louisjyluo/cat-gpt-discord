@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# MongoDB connection
 MONGO_URI = os.getenv('MONGO_URI')
 BULK_PASSWORD = os.getenv('BULK_PASSWORD') or ""
 client = MongoClient(MONGO_URI)
