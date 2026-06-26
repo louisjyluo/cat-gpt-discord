@@ -12,7 +12,7 @@ import math
 import random
 from typing import Optional
 
-from gamble_constants import (
+from .gamble_constants import (
     ABILITY_LIMITS,
     ASCEND_COST,
     FOUNDATION_BASE_BALANCE_BY_LEVEL,

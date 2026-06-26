@@ -1,7 +1,7 @@
 import discord
 
 from db import get_user_balance
-from race import MAX_TOTAL_STATS, RACER_COST_PER_OWNED, create_racer, get_race, increase_racer_stat, is_primary_racer, remove_racer_by_index, set_primary_racer
+from .race import MAX_TOTAL_STATS, RACER_COST_PER_OWNED, create_racer, get_race, increase_racer_stat, is_primary_racer, remove_racer_by_index, set_primary_racer
 
 
 def get_racer_for_owner(guild_id, owner_id, racer_name):

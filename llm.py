@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-catClient = OpenAI(api_key=os.getenv('CATSEEK'))
+catClient = OpenAI(api_key=os.getenv('CATGPT'))
 api_request_counter = 0
 
 
@@ -20,7 +20,7 @@ async def chat(msg):
     system_prompt = "Make the response sound like a cat replied and do not exceed 200 words under any circumstance."
 
     response = catClient.chat.completions.create(
-      model="gpt-5.2",
+      model="gpt-5.4-mini",
       messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message}
@@ -44,15 +44,16 @@ async def summarize_text(text):
 
   try:
     system_prompt = (
-      "You are CatGPT. Summarize the user's provided Discord message in a clear, concise way. "
-      "Keep it under 120 words. Preserve key facts, names, and numbers. "
-      "Make sure the summary is shorter than the original message."
-      "Use 1-5 bullet points if necessary. Do not add any information that is not explicitly stated in the original message."
+      "You are CatGPT. Summarize the user's provided Discord message(s) in a clear, concise way. "
+      "If multiple messages are provided, they are formatted as 'Author: message' and you should summarize the overall conversation. "
+      "Keep it under 150 words. Preserve key facts, names, and numbers. "
+      "Make sure the summary is shorter than the original content. "
+      "Use 1-5 bullet points if necessary. Do not add any information that is not explicitly stated in the original message(s). "
       "Prioritize sounding like a cat."
     )
 
     response = catClient.chat.completions.create(
-      model="gpt-5.2",
+      model="gpt-5.4-mini",
       messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": text}

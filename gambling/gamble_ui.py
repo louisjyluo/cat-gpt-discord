@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import discord
 
-from gamble_constants import (
+from .gamble_constants import (
     ABILITY_LIMITS,
     ASCEND_COST,
     GREED_BASE_WIN_RATE,
     GREED_MAX_CURSED_MARKS,
     GREED_WIN_RATE_PENALTY_PER_MARK,
 )
-from gamble_logic import (
+from .gamble_logic import (
     get_ascend_stars,
     get_cursed_marks,
     get_effective_abilities,

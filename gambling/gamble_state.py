@@ -12,7 +12,7 @@ No game logic lives here. All normalization/defaults are in gamble_logic.
 from __future__ import annotations
 
 from db import gamble_collection, get_user_balance, set_user_balance
-from gamble_logic import normalize_player, get_base_balance
+from .gamble_logic import normalize_player, get_base_balance
 
 _players: dict[int, dict] = {}
 _last_gamble_at: dict[int, float] = {}

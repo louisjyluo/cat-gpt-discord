@@ -2,7 +2,7 @@ import asyncio
 import discord
 
 from db import get_recent_race_history
-from race import JOIN_RACE_COST, advance_race, consume_pending_finish_response, get_race, get_race_message, join_primary_racer, place_race_bet, start_new_race
+from .race import JOIN_RACE_COST, advance_race, consume_pending_finish_response, get_race, get_race_message, join_primary_racer, place_race_bet, start_new_race
 
 
 AUTO_ADVANCE_INTERVAL_SECONDS = 2.0

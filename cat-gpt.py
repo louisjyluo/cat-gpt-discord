@@ -5,13 +5,13 @@ import discord
 import random
 from discord.ext import commands
 from dotenv import load_dotenv
-from gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
+from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
 from acronym import acronym, unacronym, load_acronym_database, save_acronym_database, get_matching_acronym
 from dictionary import lookup_acronym, list_all_acronyms
 from llm import chat, summarize_text
 from db import init_db, close_db, extract_collection_json, bulk_upload_collection, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
-from race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
-from racer_ui import RacersPanelView, build_racers_embed
+from races.race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
+from races.racer_ui import RacersPanelView, build_racers_embed
 
 load_dotenv()
 
@@ -74,6 +74,7 @@ HELP_MESSAGE = (
   "**CatGPT Commands**\n"
   "- `catgpt <message>`: Ask CatGPT a question.\n"
   "- `catgpt summarize` or `catsum`: Reply to a message to summarize it.\n"
+  "- `catsum <number>`: Summarizes the last x messages in the channel (max 50).\n"
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
@@ -134,8 +135,40 @@ def resolve_stim_target_id(msg, username_arg):
 
 
 async def handle_summary_command(msg, content_lower):
-  if content_lower not in {"catgpt summarize", "catsum"}:
+  parts = content_lower.split()
+  is_catsum_count = len(parts) == 2 and parts[0] == "catsum" and parts[1].isdigit()
+
+  if content_lower not in {"catgpt summarize", "catsum"} and not is_catsum_count:
     return False
+
+  if is_catsum_count:
+    count = min(int(parts[1]), 50)
+    if count < 10:
+      await msg.reply("Mrow? Give me a number between 10 and 50!")
+      return True
+
+    fetched = []
+    async for m in msg.channel.history(limit=count + 1):
+      if m.id == msg.id:
+        continue
+      if m.author == client.user:
+        continue
+      if m.content.strip():
+        fetched.append(m)
+      if len(fetched) >= count:
+        break
+
+    fetched.reverse()
+
+    if not fetched:
+      await msg.reply("Mew... no messages found to summarize!")
+      return True
+
+    formatted = "\n".join(
+      f"{m.author.display_name}: {m.content.strip()}" for m in fetched
+    )
+    await msg.reply(await summarize_text(formatted))
+    return True
 
   if msg.reference is None or msg.reference.message_id is None:
     await msg.reply("Mrow? Reply to a message with `catgpt summarize` or `catsum`, and I'll pounce on a summary.")

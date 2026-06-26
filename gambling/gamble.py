@@ -19,8 +19,8 @@ import time
 import discord
 
 from db import get_gamble_leaderboard
-from gamble_constants import ASCEND_COST, GREED_MAX_CURSED_MARKS
-from gamble_logic import (
+from .gamble_constants import ASCEND_COST, GREED_MAX_CURSED_MARKS
+from .gamble_logic import (
     apply_ascend,
     apply_gamble,
     apply_purchase_ability,
@@ -34,7 +34,7 @@ from gamble_logic import (
     get_sins,
     resolve_duel,
 )
-from gamble_state import (
+from .gamble_state import (
     get_last_gamble_at,
     get_or_create_player,
     load_gamble_database,
@@ -42,7 +42,7 @@ from gamble_state import (
     save_player,
     set_last_gamble_at,
 )
-from gamble_ui import (
+from .gamble_ui import (
     AscendConfirmView,
     AscensionView,
     GambleAmountModal,
