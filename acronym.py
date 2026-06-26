@@ -34,11 +34,11 @@ def word_acronym(guild_id, word):
     raise ValueError("Word must be at least 4 characters long.")
 
   generated_acronym = word[-(len(word) // 2):].upper()
-  # Upsert: update if exists, insert if not
-  acronym_collection.update_one(
-    {'guild_id': guild_id, 'phrase': word.lower().strip()},
-    {'$set': {'guild_id': guild_id, 'phrase': word.lower().strip(), 'acronym': generated_acronym}},
-    upsert=True
+  existing = acronym_collection.find_one({'guild_id': guild_id, 'phrase': word.lower().strip()})
+  if existing:
+    raise ValueError(f"This acronym has already been added: **{existing['phrase']}** → {existing['acronym']}")
+  acronym_collection.insert_one(
+    {'guild_id': guild_id, 'phrase': word.lower().strip(), 'acronym': generated_acronym}
   )
   return generated_acronym
 
@@ -49,11 +49,11 @@ def phrase_acronym(guild_id, phrase):
     if word[0].isalpha():
       generated_acronym += word[0].upper()
   
-  # Upsert: update if exists, insert if not
-  acronym_collection.update_one(
-    {'guild_id': guild_id, 'phrase': phrase.lower().strip()},
-    {'$set': {'guild_id': guild_id, 'phrase': phrase.lower().strip(), 'acronym': generated_acronym}},
-    upsert=True
+  existing = acronym_collection.find_one({'guild_id': guild_id, 'phrase': phrase.lower().strip()})
+  if existing:
+    raise ValueError(f"This acronym has already been added: **{existing['phrase']}** → {existing['acronym']}")
+  acronym_collection.insert_one(
+    {'guild_id': guild_id, 'phrase': phrase.lower().strip(), 'acronym': generated_acronym}
   )
   return generated_acronym
 

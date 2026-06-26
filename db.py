@@ -320,6 +320,14 @@ def validate_gamble_data(data):
           raise ValueError(
             f"ascension_abilities.{flag_key} for user {user_id} must be boolean, got: {abilities[flag_key]}"
           )
+
+    if "sins" in row:
+      sins = row["sins"]
+      if not isinstance(sins, dict):
+        raise ValueError(f"sins for user {user_id} must be an object, got: {type(sins)}")
+      for sin_key in ("pride", "greed"):
+        if sin_key in sins and not isinstance(sins[sin_key], bool):
+          raise ValueError(f"sins.{sin_key} for user {user_id} must be boolean, got: {sins[sin_key]}")
   
   return True
 

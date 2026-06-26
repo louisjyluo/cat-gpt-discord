@@ -63,6 +63,11 @@ SPECIAL_EVENT_WEIGHTS = {
 
 REROLL_COST_PERCENT = 15.0
 
+GREED_BASE_WIN_RATE = 80.0          # % single-bucket win rate with Greed sin active
+GREED_WIN_RATE_PENALTY_PER_MARK = 2.0  # % reduction per cursed mark
+GREED_MIN_WIN_RATE = 50.0           # floor win rate
+GREED_MAX_CURSED_MARKS = 15         # marks beyond this have no additional effect
+
 OUTCOME_LABELS = {
   "JACKPOT_10X": "10x Jackpot",
   "TRIPLE_WIN": "Triple Win",

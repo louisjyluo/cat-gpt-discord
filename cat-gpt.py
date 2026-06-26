@@ -5,9 +5,9 @@ import discord
 import random
 from discord.ext import commands
 from dotenv import load_dotenv
-from gamble import send_gamble_panel, load_gamble_database, save_gamble_database
+from gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
 from acronym import acronym, unacronym, load_acronym_database, save_acronym_database, get_matching_acronym
-from dictionary import lookup_acronym
+from dictionary import lookup_acronym, list_all_acronyms
 from llm import chat, summarize_text
 from db import init_db, close_db, extract_collection_json, bulk_upload_collection, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
 from race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
@@ -57,6 +57,7 @@ protected_acro_phrases = {
     "roll",
     "bank",
     "stim",
+    "duel",
     "racer",
     "racers",
     "race",
@@ -77,11 +78,13 @@ HELP_MESSAGE = (
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
   "- `dict <acronym>`: Looks up what phrase(s) an acronym stands for.\n"
+  "- `dict .`: Lists all stored acronyms for this server.\n"
   "- `extract <target>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `upload <target>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
   "- `bank [username]`: Shows your balance or another user's balance.\n"
   "- `stim <username> <$amount>`: Adds money to a user's balance (Blouis only).\n"
+  "- `duel @user`: Duel another player (requires Wrath sin). Higher roll wins; loser resets to floor.\n"
   "- `racer`: Opens your racers UI (alias of `racers`).\n"
   "- `racers`: Opens your racers UI (create racer + form by index).\n"
   "- `race`: Opens the race panel.\n"
@@ -272,9 +275,28 @@ async def handle_dict_command(msg):
     await msg.reply("This command only works in a server.")
     return True
 
-  acro_input = msg.content[4:].strip().upper()
+  acro_input = msg.content[4:].strip()
+
+  if acro_input == ".":
+    try:
+      pairs = list_all_acronyms(str(msg.guild.id))
+      if not pairs:
+        await msg.reply("No acronyms stored for this server.")
+      else:
+        lines = ["**All Acronyms:**"]
+        for acronym, phrase in pairs:
+          lines.append(f"**{acronym}** → {phrase}")
+        message = "\n".join(lines)
+        if len(message) > 1900:
+          message = message[:1900] + "\n...and more."
+        await msg.reply(message)
+    except ValueError as e:
+      await msg.reply(str(e))
+    return True
+
+  acro_input = acro_input.upper()
   if not acro_input:
-    await msg.reply("Usage: dict <acronym>")
+    await msg.reply("Usage: dict <acronym> | dict . (list all)")
     return True
 
   try:
@@ -365,6 +387,14 @@ async def handle_stim_command(msg):
   return True
 
 
+async def handle_duel_command(msg):
+  if not msg.content.lower().startswith("duel "):
+    return False
+  opponent_input = msg.content[5:].strip()
+  await send_duel_command(msg, opponent_input)
+  return True
+
+
 async def handle_exact_commands(msg, content_lower):
   match content_lower:
     case "help":
@@ -445,6 +475,7 @@ async def on_message(msg):
     "dict": handle_dict_command,
     "bank": handle_bank_command,
     "stim": handle_stim_command,
+    "duel": handle_duel_command,
   }
 
   handler = prefix_handlers.get(command)
