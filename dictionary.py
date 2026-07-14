@@ -22,6 +22,8 @@ def find_acronyms_in_message(guild_id, message_content):
   found = {}
   upper_content = message_content.upper()
   for acro, phrases in acronym_map.items():
+    if not acro:
+      continue
     pattern = r'\b' + re.escape(acro) + r'\b'
     if re.search(pattern, upper_content):
       found[acro] = phrases

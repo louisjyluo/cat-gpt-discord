@@ -342,16 +342,21 @@ async def handle_unacro_command(msg):
 
   if acro_input == "../":
     bot_msg = None
+    acro = None
     async for m in msg.channel.history(limit=20):
-      if m.author == client.user and m.content.startswith("The Big "):
-        bot_msg = m
-        break
+      if m.author == client.user:
+        if m.content.startswith("The Big "):
+          bot_msg = m
+          acro = m.content[8:].strip()
+          break
+        if m.content.startswith("Acronym added: "):
+          bot_msg = m
+          acro = m.content[15:].strip()
+          break
 
     if bot_msg is None:
-      await msg.reply("No `The Big <acro>` found in the last 20 messages. Can't use `../` here.")
+      await msg.reply("No `The Big <acro>` or `Acronym added: <acro>` found in the last 20 messages. Can't use `../` here.")
       return True
-
-    acro = bot_msg.content[8:].strip()
     try:
       removed = unacronym_by_acronym(str(msg.guild.id), acro)
       if removed:

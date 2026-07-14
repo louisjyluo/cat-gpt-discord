@@ -44,11 +44,20 @@ def word_acronym(guild_id, word):
 
 
 def phrase_acronym(guild_id, phrase):
-  generated_acronym = ""
+  parts = []
   for word in phrase.split():
-    if word[0].isalpha():
-      generated_acronym += word[0].upper()
-  
+    i = 0
+    while i < len(word) and not word[i].isalpha():
+      i += 1
+    prefix = word[:i]
+    first_alpha = word[i].upper() if i < len(word) else ""
+    parts.append(prefix + first_alpha)
+
+  generated_acronym = "".join(parts)
+
+  if not any(c.isalpha() for c in generated_acronym):
+    raise ValueError("You can't acro a phrase of only numbers.")
+
   existing = acronym_collection.find_one({'guild_id': guild_id, 'phrase': phrase.lower().strip()})
   if existing:
     raise ValueError(f"This acronym has already been added: **{existing['phrase']}** → {existing['acronym']}")
