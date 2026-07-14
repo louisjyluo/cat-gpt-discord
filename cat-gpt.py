@@ -6,8 +6,8 @@ import random
 from discord.ext import commands
 from dotenv import load_dotenv
 from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
-from acronym import acronym, unacronym, load_acronym_database, save_acronym_database, get_matching_acronym
-from dictionary import lookup_acronym, list_all_acronyms
+from acronym import acronym, unacronym, unacronym_by_acronym, load_acronym_database, save_acronym_database, get_matching_acronym
+from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message
 from llm import chat, summarize_text
 from db import init_db, close_db, extract_collection_json, bulk_upload_collection, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
 from races.race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
@@ -78,7 +78,6 @@ HELP_MESSAGE = (
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
-  "- `dict <acronym>`: Looks up what phrase(s) an acronym stands for.\n"
   "- `dict .`: Lists all stored acronyms for this server.\n"
   "- `extract <target>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `upload <target>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
@@ -327,20 +326,7 @@ async def handle_dict_command(msg):
       await msg.reply(str(e))
     return True
 
-  acro_input = acro_input.upper()
-  if not acro_input:
-    await msg.reply("Usage: dict <acronym> | dict . (list all)")
-    return True
-
-  try:
-    phrases = lookup_acronym(str(msg.guild.id), acro_input)
-    if not phrases:
-      await msg.reply(f"No phrases found for **{acro_input}**.")
-    else:
-      lines = "\n".join(f"- {p}" for p in phrases)
-      await msg.reply(f"**{acro_input}** stands for:\n{lines}")
-  except ValueError as e:
-    await msg.reply(str(e))
+  await msg.reply("Usage: dict . (list all)")
   return True
 
 
@@ -352,7 +338,31 @@ async def handle_unacro_command(msg):
     await msg.reply("This command only works in a server.")
     return True
 
-  acro_input = msg.content[6:].lower().strip()
+  acro_input = msg.content[6:].strip()
+
+  if acro_input == "../":
+    bot_msg = None
+    async for m in msg.channel.history(limit=20):
+      if m.author == client.user and m.content.startswith("The Big "):
+        bot_msg = m
+        break
+
+    if bot_msg is None:
+      await msg.reply("No `The Big <acro>` found in the last 20 messages. Can't use `../` here.")
+      return True
+
+    acro = bot_msg.content[8:].strip()
+    try:
+      removed = unacronym_by_acronym(str(msg.guild.id), acro)
+      if removed:
+        await msg.reply(f"Acronym removed: {acro}")
+      else:
+        await msg.reply(f"No acronym found for **{acro}**.")
+    except ValueError as e:
+      await msg.reply(str(e))
+    return True
+
+  acro_input = acro_input.lower()
   if acro_input:
     try:
       removed = unacronym(str(msg.guild.id), acro_input)
@@ -473,6 +483,18 @@ async def handle_exact_commands(msg, content_lower):
       return False
 
 
+async def handle_auto_dict(msg):
+  if msg.guild is None:
+    return
+  found = find_acronyms_in_message(str(msg.guild.id), msg.content)
+  if not found:
+    return
+  for acro in sorted(found):
+    phrases = found[acro]
+    lines = "\n".join(f"- {p}" for p in phrases)
+    await msg.reply(f"**{acro}** stands for:\n{lines}")
+
+
 async def handle_passive_reactions(msg):
   if any(word in msg.content for word in skulls):
     emoji = discord.utils.get(msg.guild.emojis, name='tetoaddressme')
@@ -522,6 +544,7 @@ async def on_message(msg):
   if await handle_exact_commands(msg, content_lower):
     return
 
+  await handle_auto_dict(msg)
   await handle_passive_reactions(msg)
 
 try:

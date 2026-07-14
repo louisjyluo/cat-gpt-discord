@@ -82,3 +82,13 @@ def unacronym(guild_id, phrase):
 
   result = acronym_collection.delete_one({'guild_id': guild_id, 'phrase': normalized})
   return result.deleted_count > 0
+
+
+def unacronym_by_acronym(guild_id, acronym_str):
+  guild_id = str(guild_id)
+  normalized = acronym_str.strip().upper()
+  if not normalized:
+    raise ValueError("Acronym cannot be empty.")
+
+  result = acronym_collection.delete_one({'guild_id': guild_id, 'acronym': normalized})
+  return result.deleted_count > 0
