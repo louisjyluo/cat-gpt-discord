@@ -494,10 +494,10 @@ async def handle_auto_dict(msg):
   found = find_acronyms_in_message(str(msg.guild.id), msg.content)
   if not found:
     return
-  for acro in sorted(found):
-    phrases = found[acro]
-    lines = "\n".join(f"- {p}" for p in phrases)
-    await msg.reply(f"**{acro}** stands for:\n{lines}")
+  acro = random.choice(list(found.keys()))
+  phrases = found[acro]
+  joined = ", or ".join(f"**{p}**" for p in phrases)
+  await msg.reply(f"errm, **{acro}** stands for {joined}, it's slang btw <:ermmm:1507526975458377728>")
 
 
 async def handle_passive_reactions(msg):

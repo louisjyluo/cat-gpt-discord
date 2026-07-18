@@ -1,5 +1,5 @@
 from db import acronym_collection
-
+import random
 
 def load_acronym_database():
   """Load all acronyms from MongoDB into memory (optional, can query directly)."""
@@ -68,16 +68,13 @@ def phrase_acronym(guild_id, phrase):
 
 
 def get_matching_acronym(guild_id, content_lower):
-  """Find the longest matching acronym phrase in content."""
+  """Find all matching acronym phrases in content and return a random one."""
   try:
     all_acronyms = list(acronym_collection.find({'guild_id': str(guild_id)}))
-    all_acronyms.sort(key=lambda x: len(x['phrase']), reverse=True)
-    
-    for entry in all_acronyms:
-      if entry['phrase'] in content_lower:
-        return entry['acronym']
-    
-    return None
+    matches = [entry['acronym'] for entry in all_acronyms if entry['phrase'] in content_lower]
+    if not matches:
+      return None
+    return random.choice(matches)
   except Exception as e:
     print(f"Error getting matching acronym: {e}")
     return None
