@@ -497,7 +497,10 @@ async def handle_auto_dict(msg):
   acro = random.choice(list(found.keys()))
   phrases = found[acro]
   joined = ", or ".join(f"**{p}**" for p in phrases)
-  await msg.reply(f"errm, **{acro}** stands for {joined}, it's slang btw <:ermmm:1507526975458377728>")
+  replys = [f"errm, **{acro}** stands for {joined}, it's slang btw <:ermmm:1507526975458377728>",
+            f"for those who just joined the chat, **{acro}** is short for {joined}",
+            f"btw chat **{acro}** is slang for {joined}"]
+  await msg.reply(replys[random.randint(0, len(replys) - 1)])
 
 
 async def handle_passive_reactions(msg):
