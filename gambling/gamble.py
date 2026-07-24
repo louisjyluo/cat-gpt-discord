@@ -18,20 +18,17 @@ import time
 
 import discord
 
-from db import get_gamble_leaderboard
-from .gamble_constants import ASCEND_COST, GREED_MAX_CURSED_MARKS
+from db import get_gamble_leaderboard, get_true_leaderboard
+from .gamble_constants import ASCEND_COST
 from .gamble_logic import (
     apply_ascend,
     apply_gamble,
     apply_purchase_ability,
     apply_reroll,
-    apply_retribution,
     apply_scry,
-    apply_toggle_sin,
+    apply_toggle_true_mode,
     get_base_balance,
-    get_cursed_marks,
     get_gamble_cooldown,
-    get_sins,
     resolve_duel,
 )
 from .gamble_state import (
@@ -45,15 +42,15 @@ from .gamble_state import (
 from .gamble_ui import (
     AscendConfirmView,
     AscensionView,
-    GambleAmountModal,
     GambleMenuView,
     GambleView,
-    SinsView,
+    TrueGambleView,
     build_ascension_embed,
     build_gamble_embed,
     build_leaderboard_text,
     build_menu_embed,
-    build_sins_embed,
+    build_true_gamble_embed,
+    build_true_leaderboard_text,
 )
 
 # Re-export for cat-gpt.py
@@ -69,14 +66,21 @@ def _make_gamble_view(player: dict) -> GambleView:
         on_scry=_on_scry,
         on_reroll=_on_reroll,
         on_menu=_on_menu,
-        on_retribution_submit=_on_retribution_submit,
     )
+
+
+def _make_true_gamble_view(player: dict) -> TrueGambleView:
+    return TrueGambleView(on_roll=_on_true_roll, on_menu=_on_menu, on_leaderboard=_on_true_leaderboard)
 
 
 async def _show_gamble_panel(interaction: discord.Interaction, player: dict, *, content: str = ""):
     """Edit the current interaction message to show the gamble panel."""
-    embed = build_gamble_embed(player)
-    view = _make_gamble_view(player)
+    if bool(player.get("true_mode", False)):
+        embed = build_true_gamble_embed(player)
+        view = _make_true_gamble_view(player)
+    else:
+        embed = build_gamble_embed(player)
+        view = _make_gamble_view(player)
     try:
         await interaction.response.edit_message(content=content, embed=embed, view=view)
     except discord.InteractionResponded:
@@ -97,29 +101,45 @@ async def _on_gamble(interaction: discord.Interaction, wager_str: str) -> None:
 
     # Wager parsing
     raw = wager_str.strip().lower()
-    if player.get("next_pull_revealed") and raw not in ("all", "half"):
+    true_mode = bool(player.get("true_mode", False))
+    if player.get("next_pull_revealed") and not true_mode and raw not in ("all", "half"):
         await interaction.response.send_message(
             "Custom amounts are disabled after Scry — use Half, All, or Reroll.",
             ephemeral=True,
         )
         return
-    if raw == "all":
-        wager = player["money"]
-    elif raw == "half":
-        wager = max(1, player["money"] // 2)
-    else:
-        try:
-            wager = int(raw)
-        except ValueError:
-            await interaction.response.send_message('Enter a number, "all", or "half".', ephemeral=True)
+    if true_mode:
+        true_money = int(player.get("true_money", 0) or 0)
+        if raw == "all":
+            wager = max(1, true_money) if true_money > 0 else 100
+        elif raw == "half":
+            wager = max(1, true_money // 2) if true_money > 0 else 50
+        else:
+            try:
+                wager = int(raw)
+            except ValueError:
+                await interaction.response.send_message('Enter a number, "all", or "half".', ephemeral=True)
+                return
+        if wager <= 0:
+            await interaction.response.send_message("Wager must be greater than 0.", ephemeral=True)
             return
-
-    if wager <= 0:
-        await interaction.response.send_message("Wager must be greater than 0.", ephemeral=True)
-        return
-    if wager > player["money"]:
-        await interaction.response.send_message(f"You only have ${player['money']:,}.", ephemeral=True)
-        return
+    else:
+        if raw == "all":
+            wager = player["money"]
+        elif raw == "half":
+            wager = max(1, player["money"] // 2)
+        else:
+            try:
+                wager = int(raw)
+            except ValueError:
+                await interaction.response.send_message('Enter a number, "all", or "half".', ephemeral=True)
+                return
+        if wager <= 0:
+            await interaction.response.send_message("Wager must be greater than 0.", ephemeral=True)
+            return
+        if wager > player["money"]:
+            await interaction.response.send_message(f"You only have ${player['money']:,}.", ephemeral=True)
+            return
 
     # Cooldown check
     now = time.monotonic()
@@ -177,33 +197,6 @@ async def _on_reroll(interaction: discord.Interaction) -> None:
     await _show_gamble_panel(interaction, new_player)
 
 
-async def _on_retribution_submit(interaction: discord.Interaction, stars_str: str) -> None:
-    if interaction.guild is None:
-        await interaction.response.send_message("Retribution only works in a server.", ephemeral=True)
-        return
-
-    player = get_or_create_player(interaction.guild_id, interaction.user.id, interaction.user.display_name)
-    try:
-        spend = max(0, int(stars_str.strip()))
-    except (ValueError, TypeError):
-        await interaction.response.send_message("Enter a valid number of stars.", ephemeral=True)
-        return
-
-    new_player, err = apply_retribution(player, spend)
-    if err:
-        await interaction.response.send_message(err, ephemeral=True)
-        return
-
-    save_player(interaction.user.id, str(interaction.guild_id), new_player)
-    removed = get_cursed_marks(player) - get_cursed_marks(new_player)
-    await interaction.response.send_message(
-        f"Removed {removed} Cursed Mark(s). Remaining: {get_cursed_marks(new_player)}.",
-        ephemeral=True,
-    )
-    # Refresh the panel
-    await _show_gamble_panel(interaction, new_player)
-
-
 # ─── Menu ─────────────────────────────────────────────────────────────────────
 
 async def _on_menu(interaction: discord.Interaction) -> None:
@@ -215,8 +208,9 @@ async def _on_menu(interaction: discord.Interaction) -> None:
     menu_view = GambleMenuView(
         on_leaderboard=_on_menu_leaderboard,
         on_ascension=_on_menu_ascension,
-        on_sins=_on_menu_sins,
         on_back=_on_menu_back,
+        on_true_mode=_on_toggle_true_mode,
+        player=player,
     )
     await interaction.response.edit_message(
         content="",
@@ -318,40 +312,46 @@ async def _on_ascend_confirm(interaction: discord.Interaction) -> None:
         pass
 
 
-# ─── Sins ─────────────────────────────────────────────────────────────────────
-
-async def _on_menu_sins(interaction: discord.Interaction) -> None:
+async def _on_toggle_true_mode(interaction: discord.Interaction) -> None:
     if interaction.guild is None:
         await interaction.response.send_message("Only works in a server.", ephemeral=True)
         return
 
     player = get_or_create_player(interaction.guild_id, interaction.user.id, interaction.user.display_name)
-    view = SinsView(player, on_toggle_sin=_on_toggle_sin)
-    await interaction.response.send_message(
-        embed=build_sins_embed(player),
-        view=view,
-        ephemeral=True,
-    )
-
-
-async def _on_toggle_sin(interaction: discord.Interaction, key: str) -> None:
-    if interaction.guild is None:
-        await interaction.response.send_message("Only works in a server.", ephemeral=True)
-        return
-
-    player = get_or_create_player(interaction.guild_id, interaction.user.id, interaction.user.display_name)
-    new_player, err = apply_toggle_sin(player, key)
-    if err:
-        await interaction.response.send_message(err, ephemeral=True)
-        return
-
+    new_player = apply_toggle_true_mode(player)
     save_player(interaction.user.id, str(interaction.guild_id), new_player)
-    view = SinsView(new_player, on_toggle_sin=_on_toggle_sin)
-    await interaction.response.edit_message(
-        content=f"{key.title()} toggled.",
-        embed=build_sins_embed(new_player),
-        view=view,
-    )
+    await interaction.response.defer()
+    await _show_gamble_panel(interaction, new_player)
+
+
+async def _on_true_leaderboard(interaction: discord.Interaction) -> None:
+    entries = get_true_leaderboard(interaction.guild_id, limit=5)
+    await interaction.response.send_message(build_true_leaderboard_text(entries), ephemeral=True)
+
+
+async def _on_true_roll(interaction: discord.Interaction) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message("Only works in a server.", ephemeral=True)
+        return
+
+    player = get_or_create_player(interaction.guild_id, interaction.user.id, interaction.user.display_name)
+
+    now = time.monotonic()
+    cooldown = get_gamble_cooldown(player)
+    last_at = get_last_gamble_at(interaction.user.id)
+    if last_at is not None:
+        retry = cooldown - (now - last_at)
+        if retry > 0:
+            await interaction.response.send_message(
+                f"Cool down — try again in {round(retry, 2)}s.", ephemeral=True
+            )
+            return
+    set_last_gamble_at(interaction.user.id, now)
+
+    new_player, label = apply_gamble(player, 0)  # wager unused in true mode
+    save_player(interaction.user.id, str(interaction.guild_id), new_player)
+    await interaction.response.defer()
+    await _show_gamble_panel(interaction, new_player)
 
 
 # ─── Duel (text command, requires Wrath) ─────────────────────────────────────
@@ -362,9 +362,6 @@ async def send_duel_command(msg: discord.Message, opponent_input: str) -> None:
         return
 
     challenger = get_or_create_player(msg.guild.id, msg.author.id, msg.author.display_name)
-    if not get_sins(challenger)["wrath"]:
-        await msg.reply("You need the Wrath sin active to duel.")
-        return
 
     match = re.search(r"\d{15,20}", opponent_input.strip())
     if not match:
@@ -427,4 +424,7 @@ async def send_gamble_panel(msg: discord.Message) -> None:
         if player["money"] == 1
         else "Welcome back! Use the buttons below to keep gambling."
     )
-    await msg.reply(welcome, embed=build_gamble_embed(player), view=_make_gamble_view(player))
+    if bool(player.get("true_mode", False)):
+        await msg.reply(welcome, embed=build_true_gamble_embed(player), view=_make_true_gamble_view(player))
+    else:
+        await msg.reply(welcome, embed=build_gamble_embed(player), view=_make_gamble_view(player))

@@ -17,10 +17,6 @@ from .gamble_constants import (
     ASCEND_COST,
     FOUNDATION_BASE_BALANCE_BY_LEVEL,
     FICKLE_EVENT_BONUS_PERCENT_BY_LEVEL,
-    GREED_BASE_WIN_RATE,
-    GREED_MAX_CURSED_MARKS,
-    GREED_MIN_WIN_RATE,
-    GREED_WIN_RATE_PENALTY_PER_MARK,
     HEAVY_DIE_SINGLE_WIN_RATIO_BY_LEVEL,
     INFLUENCE_SPECIAL_EVENT_GOOD_RATIO_BY_LEVEL,
     OUTCOME_LABELS,
@@ -58,32 +54,15 @@ def normalize_player(raw: Optional[dict]) -> dict:
     abilities["unbounded"] = bool(raw_ab.get("unbounded", False))
     abilities["blessed"] = bool(raw_ab.get("blessed", False))
 
-    # ── Sins (with legacy key migration) ──────────────────────────────────────
-    raw_sins = raw.get("sins", {})
-    if not isinstance(raw_sins, dict):
-        raw_sins = {}
-    # Legacy: old "greed" sin key was Envy; "greed_new" was real Greed
-    if "envy" in raw_sins or "wrath" in raw_sins:
-        sins = {
-            "pride": bool(raw_sins.get("pride", False)),
-            "envy": bool(raw_sins.get("envy", False)),
-            "wrath": bool(raw_sins.get("wrath", False)),
-            "greed": bool(raw_sins.get("greed", False)),
-        }
-    else:
-        sins = {
-            "pride": bool(raw_sins.get("pride", False)),
-            "envy": bool(raw_sins.get("greed", False)),        # legacy migration
-            "wrath": False,
-            "greed": bool(raw_sins.get("greed_new", False)),   # legacy migration
-        }
-    # Migrate old ability-based envy flag
-    if bool(raw_ab.get("greed", False)):
-        sins["envy"] = True
-
     next_pull = raw.get("next_pull")
     if next_pull not in OUTCOME_LABELS:
         next_pull = None
+
+    _tm_raw = raw.get("true_money")
+    try:
+        _true_money = int(_tm_raw) if _tm_raw is not None else 0
+    except (TypeError, ValueError):
+        _true_money = 0
 
     return {
         "name": str(raw.get("name", "Unknown")),
@@ -94,21 +73,15 @@ def normalize_player(raw: Optional[dict]) -> dict:
         "next_pull_revealed": bool(raw.get("next_pull_revealed", False)) and next_pull is not None,
         "gambler_stars": _int(raw.get("gambler_stars"), floor=0),
         "ascension_abilities": abilities,
-        "sins": sins,
-        "cursed_marks": _int(raw.get("cursed_marks"), floor=0),
-        "greed_duration": min(GREED_MAX_CURSED_MARKS, _int(raw.get("greed_duration"), floor=0)),
+        "true_mode": bool(raw.get("true_mode", False)),
+        "true_winrate_wins": _int(raw.get("true_winrate_wins"), floor=0),
+        "true_winrate_total": _int(raw.get("true_winrate_total"), floor=0),
+        "true_money": _true_money,
         "guild_ids": [],  # managed by the state layer
     }
 
 
 # ─── Read-only accessors ──────────────────────────────────────────────────────
-
-def get_sins(player: dict) -> dict:
-    sins = player.get("sins")
-    if not isinstance(sins, dict):
-        return {"pride": False, "envy": False, "wrath": False, "greed": False}
-    return {k: bool(sins.get(k, False)) for k in ("pride", "envy", "wrath", "greed")}
-
 
 def get_effective_abilities(player: dict) -> dict:
     """
@@ -126,17 +99,6 @@ def get_effective_abilities(player: dict) -> dict:
             ab[key] = 0
     ab["unbounded"] = bool(raw.get("unbounded", False))
     ab["blessed"] = bool(raw.get("blessed", False))
-
-    sins = get_sins(player)
-    if sins["envy"]:
-        ab = {
-            "foundation": 1, "fickle": 1, "influence": 1,
-            "heavy_die": 1, "sage": 1, "passion": 1,
-            "unbounded": True, "blessed": True,
-        }
-    if sins["greed"]:
-        ab = dict(ab)
-        ab["heavy_die"] = 0
     return ab
 
 
@@ -169,38 +131,18 @@ def get_reroll_cost_ratio(player: dict) -> float:
     return ratio
 
 
-def get_cursed_marks(player: dict) -> int:
-    try:
-        return max(0, int(player.get("cursed_marks", 0) or 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def get_greed_duration(player: dict) -> int:
-    try:
-        return max(0, min(GREED_MAX_CURSED_MARKS, int(player.get("greed_duration", 0) or 0)))
-    except (TypeError, ValueError):
-        return 0
-
-
 def get_win_probability_percent(player: dict) -> float:
     ab = get_effective_abilities(player)
     fickle = int(ab.get("fickle", 0) or 0)
     influence = int(ab.get("influence", 0) or 0)
-    greed_active = get_sins(player)["greed"]
-    heavy = 0 if greed_active else int(ab.get("heavy_die", 0) or 0)
+    heavy = int(ab.get("heavy_die", 0) or 0)
 
     bonus = FICKLE_EVENT_BONUS_PERCENT_BY_LEVEL.get(fickle, 0.0)
     p_event = max(0.0, min(100.0, SPECIAL_EVENT_BUCKET_PERCENT + bonus))
     pos_ratio = INFLUENCE_SPECIAL_EVENT_GOOD_RATIO_BY_LEVEL.get(influence, 0.50)
     p_event_pos = p_event * pos_ratio
     remaining = max(0.0, 100.0 - p_event)
-
-    if greed_active:
-        marks = get_cursed_marks(player)
-        rate = max(GREED_MIN_WIN_RATE, GREED_BASE_WIN_RATE - marks * GREED_WIN_RATE_PENALTY_PER_MARK) / 100.0
-    else:
-        rate = HEAVY_DIE_SINGLE_WIN_RATIO_BY_LEVEL.get(heavy, 0.50)
+    rate = HEAVY_DIE_SINGLE_WIN_RATIO_BY_LEVEL.get(heavy, 0.50)
     return p_event_pos + remaining * rate
 
 
@@ -215,12 +157,11 @@ def pull_label(pull: Optional[str]) -> str:
 # ─── Random outcome generation ────────────────────────────────────────────────
 
 def draw_pull(player: dict) -> str:
-    """Draw a random pull outcome, weighted by the player's active abilities and sins."""
+    """Draw a random pull outcome, weighted by the player's active abilities."""
     ab = get_effective_abilities(player)
     fickle = int(ab.get("fickle", 0) or 0)
     influence = int(ab.get("influence", 0) or 0)
-    greed_active = get_sins(player)["greed"]
-    heavy = 0 if greed_active else int(ab.get("heavy_die", 0) or 0)
+    heavy = int(ab.get("heavy_die", 0) or 0)
 
     bonus = FICKLE_EVENT_BONUS_PERCENT_BY_LEVEL.get(fickle, 0.0)
     p_event = max(0.0, min(100.0, SPECIAL_EVENT_BUCKET_PERCENT + bonus))
@@ -243,11 +184,7 @@ def draw_pull(player: dict) -> str:
         thresholds.append((cumulative, key))
 
     remaining = max(0.0, 100.0 - p_event)
-    if greed_active:
-        marks = get_cursed_marks(player)
-        rate = max(GREED_MIN_WIN_RATE, GREED_BASE_WIN_RATE - marks * GREED_WIN_RATE_PENALTY_PER_MARK) / 100.0
-    else:
-        rate = HEAVY_DIE_SINGLE_WIN_RATIO_BY_LEVEL.get(heavy, 0.50)
+    rate = HEAVY_DIE_SINGLE_WIN_RATIO_BY_LEVEL.get(heavy, 0.50)
 
     cumulative += remaining * rate
     thresholds.append((cumulative, "SINGLE_WIN"))
@@ -261,10 +198,8 @@ def draw_pull(player: dict) -> str:
     return "SINGLE_LOSS"
 
 
-def _apply_pull_to_balance(money: int, wager: int, pull: str, floor: int, envy: bool) -> tuple[int, bool, str]:
+def _apply_pull_to_balance(money: int, wager: int, pull: str, floor: int) -> tuple[int, bool, str]:
     """Core math: resolve a pull outcome against a balance. Returns (new_money, is_win, label)."""
-    if envy and pull in ("LOSE_ALL", "TRIPLE_LOSS", "DOUBLE_LOSS"):
-        return floor, False, f"ENVY CURSE reset to ${floor:,}"
     if pull == "LOSE_ALL":
         return floor, False, f"BIG LOSS reset to ${floor:,}"
     if pull == "TRIPLE_LOSS":
@@ -287,11 +222,28 @@ def _apply_pull_to_balance(money: int, wager: int, pull: str, floor: int, envy: 
 def apply_gamble(player: dict, wager: int) -> tuple[dict, str]:
     """
     Process a gamble wager. Returns (new_player_dict, result_label).
-    All sin effects (Pride, Greed) are applied here in one place.
     """
     p = dict(player)
-    sins = get_sins(p)
     floor = get_base_balance(p)
+
+    # ── True Mode: pure 50/50 coin flip, step-based balance ladder ────────────
+    if bool(p.get("true_mode", False)):
+        is_win = random.random() < 0.5
+        true_money = int(p.get("true_money", 0) or 0)
+        # Between -1 and +∞: step = 1. Below -1: loss doubles, win halves back up.
+        if is_win:
+            step = (abs(true_money) // 2) if true_money <= -2 else 1
+        else:
+            step = abs(true_money) if true_money <= -1 else 1
+        delta = step if is_win else -step
+        label = "WIN" if is_win else "LOSS"
+        p["true_money"] = true_money + delta
+        p["last_amount_change"] = delta
+        p["last_multiplier"] = label
+        p["true_winrate_total"] = int(p.get("true_winrate_total", 0) or 0) + 1
+        if is_win:
+            p["true_winrate_wins"] = int(p.get("true_winrate_wins", 0) or 0) + 1
+        return p, p["last_multiplier"]
 
     # Use reserved pull (from Scry) if available, otherwise draw fresh
     reserved = p.get("next_pull")
@@ -302,19 +254,7 @@ def apply_gamble(player: dict, wager: int) -> tuple[dict, str]:
     else:
         pull = draw_pull(p)
 
-    new_money, is_win, label = _apply_pull_to_balance(p["money"], wager, pull, floor, sins["envy"])
-
-    # Pride: multiply win gain by current streak (disabled if fate was revealed via Scry)
-    if is_win and sins["pride"]:
-        was_revealed = bool(player.get("next_pull_revealed", False))
-        if not was_revealed:
-            streak = max(1, int(p.get("win_streak", 0) or 0))
-            gain = new_money - p["money"]
-            if gain > 0:
-                new_money = p["money"] + gain * streak
-                label = f"{label} (PRIDE x{streak})"
-        else:
-            label = f"{label} (PRIDE — no bonus, fate was revealed)"
+    new_money, is_win, label = _apply_pull_to_balance(p["money"], wager, pull, floor)
 
     p["last_amount_change"] = new_money - p["money"]
     p["money"] = max(1, new_money)
@@ -324,19 +264,6 @@ def apply_gamble(player: dict, wager: int) -> tuple[dict, str]:
         p["win_streak"] = int(p.get("win_streak", 0) or 0) + 1
     else:
         p["win_streak"] = 0
-        # Greed: add a cursed mark, tick down duration, auto-disable when exhausted
-        if sins["greed"]:
-            marks = get_cursed_marks(p) + 1
-            duration = max(0, get_greed_duration(p) - 1)
-            p["cursed_marks"] = marks
-            p["greed_duration"] = duration
-            p["last_multiplier"] = f"{label} (+1 Cursed Mark, {duration} uses left)"
-            if duration <= 0:
-                new_sins = dict(get_sins(p))
-                new_sins["greed"] = False
-                p["sins"] = new_sins
-                p["cursed_marks"] = max(0, marks - 10)
-                p["last_multiplier"] += " — Greed disabled (removed 10 marks)"
 
     return p, p["last_multiplier"]
 
@@ -346,8 +273,6 @@ def apply_scry(player: dict) -> tuple[dict, int, str]:
     Reveal the next pull by paying a % of balance.
     Returns (new_player, cost, label).  cost == -1 signals an error; label is the reason.
     """
-    if get_sins(player)["pride"]:
-        return player, -1, "Pride is active — Scry is disabled."
     if player.get("next_pull") and player.get("next_pull_revealed", False):
         return player, -1, "Your next pull is already revealed. Gamble or Reroll it."
 
@@ -406,9 +331,6 @@ def apply_purchase_ability(player: dict, key: str) -> tuple[dict, Optional[str]]
     Spend 1 star to advance an ability. Returns (new_player, error_msg).
     error_msg is None on success.
     """
-    if get_sins(player)["envy"]:
-        return player, "Envy is active — remove it from Sins before buying abilities."
-
     stars = int(player.get("gambler_stars", 0) or 0)
     if stars < 1:
         return player, "You need at least 1 Star to buy an ability."
@@ -444,41 +366,6 @@ def apply_purchase_ability(player: dict, key: str) -> tuple[dict, Optional[str]]
     return p, None
 
 
-def apply_toggle_sin(player: dict, key: str) -> tuple[dict, Optional[str]]:
-    """Spend 1 star to toggle a sin on or off. Returns (new_player, error_msg)."""
-    if key not in ("pride", "envy", "wrath", "greed"):
-        return player, "Unknown sin."
-    stars = int(player.get("gambler_stars", 0) or 0)
-    if stars < 1:
-        return player, "You need at least 1 Star to toggle a sin."
-
-    p = dict(player)
-    sins = dict(get_sins(p))
-    sins[key] = not sins[key]
-    p["sins"] = sins
-    p["gambler_stars"] = stars - 1
-    if key == "greed":
-        p["greed_duration"] = GREED_MAX_CURSED_MARKS if sins["greed"] else 0
-    return p, None
-
-
-def apply_retribution(player: dict, stars_to_spend: int) -> tuple[dict, Optional[str]]:
-    """Spend stars to remove cursed marks (1 star per mark). Returns (new_player, error_msg)."""
-    marks = get_cursed_marks(player)
-    stars = int(player.get("gambler_stars", 0) or 0)
-    if marks <= 0:
-        return player, "You have no Cursed Marks to pay off."
-    if stars <= 0:
-        return player, "You have no Stars to spend."
-    spend = min(stars_to_spend, stars, marks)
-    if spend <= 0:
-        return player, "Nothing to pay off."
-    p = dict(player)
-    p["gambler_stars"] = stars - spend
-    p["cursed_marks"] = marks - spend
-    return p, None
-
-
 def resolve_duel(challenger: dict, opponent: dict) -> tuple[str, float, float, float]:
     """
     Returns (winner, challenger_roll, opponent_roll, challenger_max).
@@ -490,3 +377,10 @@ def resolve_duel(challenger: dict, opponent: dict) -> tuple[str, float, float, f
     cr = random.uniform(0, cmax)
     or_ = random.uniform(0, ob)
     return ("challenger" if cr >= or_ else "opponent"), cr, or_, cmax
+
+
+def apply_toggle_true_mode(player: dict) -> dict:
+    """Toggle true mode on/off. Returns a new player dict."""
+    p = dict(player)
+    p["true_mode"] = not bool(player.get("true_mode", False))
+    return p

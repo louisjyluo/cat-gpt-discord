@@ -14,17 +14,12 @@ import discord
 from .gamble_constants import (
     ABILITY_LIMITS,
     ASCEND_COST,
-    GREED_BASE_WIN_RATE,
-    GREED_MAX_CURSED_MARKS,
-    GREED_WIN_RATE_PENALTY_PER_MARK,
 )
 from .gamble_logic import (
     get_ascend_stars,
-    get_cursed_marks,
     get_effective_abilities,
     get_reroll_cost_ratio,
     get_scry_cost_percent,
-    get_sins,
     get_win_probability_percent,
     pull_label,
 )
@@ -48,11 +43,6 @@ def build_gamble_embed(player: dict) -> discord.Embed:
     embed.add_field(name="Player", value=player["name"], inline=False)
     embed.add_field(name="Balance", value=f"${player['money']:,}", inline=True)
 
-    sins = get_sins(player)
-    if sins["greed"]:
-        marks = get_cursed_marks(player)
-        embed.add_field(name="Cursed Marks", value=str(marks), inline=True)
-
     next_pull = player.get("next_pull")
     revealed = player.get("next_pull_revealed", False)
     if next_pull and revealed:
@@ -61,14 +51,6 @@ def build_gamble_embed(player: dict) -> discord.Embed:
         prob = get_win_probability_percent(player)
         win_rate_text = f"{round(prob, 1)}%"
     embed.add_field(name="Win Rate", value=win_rate_text, inline=True)
-    embed.add_field(name="Win Streak", value=str(player.get("win_streak", 0)), inline=True)
-
-    change = player.get("last_amount_change", 0)
-    embed.add_field(
-        name="Last Change",
-        value=f"+{change:,}" if change > 0 else f"{change:,}",
-        inline=True,
-    )
     embed.add_field(name="Last Result", value=str(player.get("last_multiplier", "N/A")), inline=True)
     embed.add_field(
         name="Next Pull",
@@ -113,7 +95,6 @@ def build_ascension_embed(player: dict) -> discord.Embed:
         )
 
     abilities = get_effective_abilities(player)
-    envy_active = get_sins(player)["envy"]
 
     lines = [
         f"Foundation {min(5, int(abilities.get('foundation', 0) or 0))}/5 — Raises your balance floor.",
@@ -125,47 +106,28 @@ def build_ascension_embed(player: dict) -> discord.Embed:
         f"Unbounded {1 if abilities.get('unbounded') else 0}/1 — Halves Reroll cost.",
         f"Blessed {1 if abilities.get('blessed') else 0}/1 — Start each life with $1,000.",
     ]
-    note = " *(Envy grants all tier-1 — individual purchase disabled)*" if envy_active else ""
-    embed.add_field(name=f"Abilities (1 star each){note}", value="\n".join(lines), inline=False)
-    if stars >= 1 and not envy_active:
+    embed.add_field(name="Abilities (1 star each)", value="\n".join(lines), inline=False)
+    if stars >= 1:
         embed.set_footer(text="Click a button below to spend 1 star on that ability.")
-    elif stars == 0:
+    else:
         embed.set_footer(text="Ascend to earn stars, then spend them on abilities.")
     return embed
 
 
-def build_sins_embed(player: dict) -> discord.Embed:
-    """Sins panel embed."""
-    embed = discord.Embed(title="Sins", color=discord.Color.dark_red())
-    stars = int(player.get("gambler_stars", 0) or 0)
-    embed.add_field(name="Stars", value=str(stars), inline=True)
-
-    sins = get_sins(player)
-    marks = get_cursed_marks(player)
-    greed_rate = max(0, int(GREED_BASE_WIN_RATE) - marks * int(GREED_WIN_RATE_PENALTY_PER_MARK))
-
-    available = [
-        f"Pride {'✓' if sins['pride'] else '○'} — Disables Scry. Wins multiply your gain by current win streak.",
-        f"Envy {'✓' if sins['envy'] else '○'} — Grants ALL tier-1 abilities. Big losses reset to your balance floor.",
-        f"Wrath {'✓' if sins['wrath'] else '○'} — Enables the `duel` command.",
-        f"Greed {'✓' if sins['greed'] else '○'} — Disables Heavy Die. Grants {int(GREED_BASE_WIN_RATE)}% win rate. Each loss adds a Cursed Mark (−2% rate). Lasts {GREED_MAX_CURSED_MARKS} losses.",
-    ]
-    embed.add_field(name="Available (toggle costs 1 star)", value="\n".join(available), inline=False)
-
-    active = []
-    if sins["pride"]:
-        active.append("Pride — Scry disabled. Wins scaled by streak.")
-    if sins["envy"]:
-        active.append("Envy — All tier-1 abilities active. ENVY CURSE on big losses.")
-    if sins["wrath"]:
-        active.append("Wrath — Duel enabled.")
-    if sins["greed"]:
-        dur = max(0, int(player.get("greed_duration", 0) or 0))
-        active.append(f"Greed — Win rate: {greed_rate}%. {dur} uses left. {marks} cursed mark(s).")
-    if not active:
-        active.append("None active.")
-    embed.add_field(name="Active", value="\n".join(active), inline=False)
-    return embed
+def build_true_leaderboard_text(entries: list[dict]) -> str:
+    if not entries:
+        return "No True Mode records yet."
+    lines = ["**True Mode Leaderboard**"]
+    medals = ["🥇", "🥈", "🥉"]
+    for i, p in enumerate(entries):
+        prefix = medals[i] if i < 3 else f"{i + 1}."
+        tm = p['true_money']
+        tm_str = f"${tm:,}" if tm >= 0 else f"-${abs(tm):,}"
+        wins = p['true_winrate_wins']
+        total = p['true_winrate_total']
+        pct = round(100.0 * wins / total, 1) if total > 0 else 0.0
+        lines.append(f"{prefix} {p['name']} — {tm_str} | {wins}/{total} ({pct}%)")
+    return "\n".join(lines)
 
 
 def build_leaderboard_text(entries: list[dict]) -> str:
@@ -178,40 +140,27 @@ def build_leaderboard_text(entries: list[dict]) -> str:
         lines.append(f"{prefix} {p['name']} — ${p['money']:,}")
     return "\n".join(lines)
 
+def build_true_gamble_embed(player: dict) -> discord.Embed:
+    """True mode panel embed — ladder balance, win rate, no abilities."""
+    embed = discord.Embed(title="True Mode", color=discord.Color.teal())
+    embed.add_field(name="Player", value=player["name"], inline=False)
+
+    true_money = int(player.get("true_money", 0) or 0)
+    tm_str = f"${true_money:,}" if true_money >= 0 else f"-${abs(true_money):,}"
+    embed.add_field(name="True Balance", value=tm_str, inline=True)
+
+    true_wins = int(player.get("true_winrate_wins", 0) or 0)
+    true_total = int(player.get("true_winrate_total", 0) or 0)
+    if true_total > 0:
+        true_pct = round(100.0 * true_wins / true_total, 1)
+        true_wr_text = f"{true_wins}/{true_total} ({true_pct}%)"
+    else:
+        true_wr_text = "No data"
+    embed.add_field(name="True Win Rate", value=true_wr_text, inline=True)
+    embed.add_field(name="Last Result", value=str(player.get("last_multiplier", "N/A")), inline=True)
+    return embed
 
 # ─── Modals ───────────────────────────────────────────────────────────────────
-
-class GambleAmountModal(discord.ui.Modal):
-    def __init__(self, on_submit):
-        super().__init__(title="Gamble Amount")
-        self._on_submit = on_submit
-        self.amount = discord.ui.TextInput(
-            label="Amount to wager",
-            placeholder='Enter a number, "all", or "half"',
-            required=True,
-            max_length=16,
-        )
-        self.add_item(self.amount)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await self._on_submit(interaction, str(self.amount.value))
-
-
-class RetributionModal(discord.ui.Modal):
-    def __init__(self, on_submit, cursed_marks: int = 0):
-        super().__init__(title="Retribution — Remove Cursed Marks")
-        self._on_submit = on_submit
-        self.stars_input = discord.ui.TextInput(
-            label=f"Stars to spend ({cursed_marks} mark(s) available)",
-            placeholder="Enter a number",
-            required=True,
-            max_length=4,
-        )
-        self.add_item(self.stars_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await self._on_submit(interaction, str(self.stars_input.value))
-
 
 class DuelChallengeModal(discord.ui.Modal):
     def __init__(self, on_submit):
@@ -238,42 +187,28 @@ class GambleView(discord.ui.View):
       on_scry(interaction)
       on_reroll(interaction)
       on_menu(interaction)
-      on_retribution_submit(interaction, stars_str)  — optional
     """
 
-    def __init__(self, player: dict, *, on_gamble, on_scry, on_reroll, on_menu,
-                 on_retribution_submit=None):
+    def __init__(self, player: dict, *, on_gamble, on_scry, on_reroll, on_menu):
         super().__init__(timeout=None)
         self._on_gamble = on_gamble
         self._on_scry = on_scry
         self._on_reroll = on_reroll
         self._on_menu = on_menu
-        self._on_retribution_submit = on_retribution_submit
 
         scry_pct = _fmt_pct(get_scry_cost_percent(player))
         reroll_pct = _fmt_pct(get_reroll_cost_ratio(player) * 100.0)
-        sins = get_sins(player)
-        marks = get_cursed_marks(player)
-        stars = int(player.get("gambler_stars", 0) or 0)
+        true_mode = bool(player.get("true_mode", False))
 
         # Patch labels and disabled states onto the static buttons
         for item in self.children:
             cid = getattr(item, "custom_id", None)
             if cid == "g_scry":
                 item.label = f"Scry ({scry_pct}%)"
-                item.disabled = sins["pride"]
+                item.disabled = true_mode
             elif cid == "g_reroll":
                 item.label = f"Reroll ({reroll_pct}%)"
-            elif cid == "g_retribution":
-                item.disabled = not (marks > 0 and stars > 0)
-
-        self._cursed_marks = marks
-
-    @discord.ui.button(label="Amount", style=discord.ButtonStyle.primary, custom_id="g_amount", row=0)
-    async def btn_amount(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(
-            GambleAmountModal(self._on_gamble)
-        )
+                item.disabled = true_mode
 
     @discord.ui.button(label="Half", style=discord.ButtonStyle.primary, custom_id="g_half", row=0)
     async def btn_half(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -283,24 +218,15 @@ class GambleView(discord.ui.View):
     async def btn_all(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._on_gamble(interaction, "all")
 
-    @discord.ui.button(label="Scry (?%)", style=discord.ButtonStyle.success, custom_id="g_scry", row=1)
+    @discord.ui.button(label="Scry (?%)", style=discord.ButtonStyle.success, custom_id="g_scry", row=0)
     async def btn_scry(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._on_scry(interaction)
 
-    @discord.ui.button(label="Reroll (?%)", style=discord.ButtonStyle.success, custom_id="g_reroll", row=1)
+    @discord.ui.button(label="Reroll (?%)", style=discord.ButtonStyle.success, custom_id="g_reroll", row=0)
     async def btn_reroll(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._on_reroll(interaction)
 
-    @discord.ui.button(label="Retribution", style=discord.ButtonStyle.danger, custom_id="g_retribution", row=1)
-    async def btn_retribution(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self._on_retribution_submit:
-            await interaction.response.send_modal(
-                RetributionModal(self._on_retribution_submit, cursed_marks=self._cursed_marks)
-            )
-        else:
-            await interaction.response.send_message("Retribution not available.", ephemeral=True)
-
-    @discord.ui.button(label="Menu", style=discord.ButtonStyle.secondary, custom_id="g_menu", row=2)
+    @discord.ui.button(label="Menu", style=discord.ButtonStyle.secondary, custom_id="g_menu", row=0)
     async def btn_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._on_menu(interaction)
 
@@ -311,16 +237,23 @@ class GambleMenuView(discord.ui.View):
     Handlers:
       on_leaderboard(interaction)
       on_ascension(interaction)
-      on_sins(interaction)
       on_back(interaction)
+      on_true_mode(interaction)  — optional
     """
 
-    def __init__(self, *, on_leaderboard, on_ascension, on_sins, on_back):
+    def __init__(self, *, on_leaderboard, on_ascension, on_back,
+                 on_true_mode=None, player=None):
         super().__init__(timeout=None)
         self._on_leaderboard = on_leaderboard
         self._on_ascension = on_ascension
-        self._on_sins = on_sins
         self._on_back = on_back
+        self._on_true_mode = on_true_mode
+
+        true_mode = bool((player or {}).get("true_mode", False))
+        for item in self.children:
+            if getattr(item, "custom_id", None) == "m_true_mode":
+                item.label = "True Mode \u2713" if true_mode else "True Mode \u25cb"
+                item.style = discord.ButtonStyle.success if true_mode else discord.ButtonStyle.secondary
 
     @discord.ui.button(label="Leaderboard", style=discord.ButtonStyle.primary, custom_id="m_leaderboard", row=0)
     async def btn_leaderboard(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -330,13 +263,36 @@ class GambleMenuView(discord.ui.View):
     async def btn_ascension(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._on_ascension(interaction)
 
-    @discord.ui.button(label="Sins", style=discord.ButtonStyle.danger, custom_id="m_sins", row=0)
-    async def btn_sins(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._on_sins(interaction)
-
     @discord.ui.button(label="Back to Game", style=discord.ButtonStyle.secondary, custom_id="m_back", row=1)
     async def btn_back(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._on_back(interaction)
+
+    @discord.ui.button(label="True Mode \u25cb", style=discord.ButtonStyle.secondary, custom_id="m_true_mode", row=1)
+    async def btn_true_mode(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self._on_true_mode:
+            await self._on_true_mode(interaction)
+
+
+class TrueGambleView(discord.ui.View):
+    """True mode panel — Roll, Leaderboard, and Menu."""
+
+    def __init__(self, *, on_roll, on_menu, on_leaderboard):
+        super().__init__(timeout=None)
+        self._on_roll = on_roll
+        self._on_menu = on_menu
+        self._on_leaderboard = on_leaderboard
+
+    @discord.ui.button(label="Roll", style=discord.ButtonStyle.primary, custom_id="tg_roll", row=0)
+    async def btn_roll(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._on_roll(interaction)
+
+    @discord.ui.button(label="Leaderboard", style=discord.ButtonStyle.primary, custom_id="tg_leaderboard", row=0)
+    async def btn_leaderboard(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._on_leaderboard(interaction)
+
+    @discord.ui.button(label="Menu", style=discord.ButtonStyle.secondary, custom_id="tg_menu", row=0)
+    async def btn_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._on_menu(interaction)
 
 
 class AscensionView(discord.ui.View):
@@ -352,10 +308,9 @@ class AscensionView(discord.ui.View):
         self._on_ascend = on_ascend
 
         abilities = get_effective_abilities(player)
-        envy_active = get_sins(player)["envy"]
         stars = int(player.get("gambler_stars", 0) or 0)
         money = int(player.get("money", 0) or 0)
-        can_buy = stars >= 1 and not envy_active
+        can_buy = stars >= 1
 
         # Ability buy buttons (row 0 and 1)
         ability_defs = [
@@ -422,30 +377,4 @@ class AscendConfirmView(discord.ui.View):
         await interaction.response.edit_message(content="Cancelled.", view=None, embed=None)
 
 
-class SinsView(discord.ui.View):
-    """
-    Sins panel. on_toggle_sin(interaction, key: str)
-    """
 
-    def __init__(self, player: dict, *, on_toggle_sin):
-        super().__init__(timeout=600)
-        self._on_toggle_sin = on_toggle_sin
-
-        sins = get_sins(player)
-        stars = int(player.get("gambler_stars", 0) or 0)
-
-        for key in ("pride", "envy", "wrath", "greed"):
-            active = sins[key]
-            button = discord.ui.Button(
-                label=f"{key.title()} {'✓' if active else '○'}",
-                style=discord.ButtonStyle.secondary if active else discord.ButtonStyle.danger,
-                custom_id=f"sin_{key}",
-                row=0,
-                disabled=stars < 1,
-            )
-
-            async def _cb(interaction: discord.Interaction, k=key):
-                await self._on_toggle_sin(interaction, k)
-
-            button.callback = _cb
-            self.add_item(button)

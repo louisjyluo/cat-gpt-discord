@@ -175,6 +175,42 @@ def get_gamble_leaderboard(guild_id, limit=10):
   return enriched[:normalized_limit]
 
 
+def get_true_leaderboard(guild_id, limit=10):
+  gid = str(guild_id)
+  try:
+    normalized_limit = max(1, int(limit))
+  except (TypeError, ValueError):
+    normalized_limit = 10
+
+  docs = list(gamble_collection.find(
+    {'guild_ids': gid},
+    {'_id': 0, 'user_id': 1, 'name': 1, 'true_money': 1, 'true_winrate_wins': 1, 'true_winrate_total': 1}
+  ))
+
+  enriched = []
+  for doc in docs:
+    try:
+      true_money = int(doc.get('true_money') or 0)
+    except (TypeError, ValueError):
+      true_money = 0
+    try:
+      wins = int(doc.get('true_winrate_wins') or 0)
+      total = int(doc.get('true_winrate_total') or 0)
+    except (TypeError, ValueError):
+      wins, total = 0, 0
+    if total == 0:
+      continue
+    enriched.append({
+      'name': str(doc.get('name', 'Unknown')),
+      'true_money': true_money,
+      'true_winrate_wins': wins,
+      'true_winrate_total': total,
+    })
+
+  enriched.sort(key=lambda row: row['true_money'], reverse=True)
+  return enriched[:normalized_limit]
+
+
 def close_db():
   """Close MongoDB connection."""
   try:
