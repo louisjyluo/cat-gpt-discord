@@ -230,11 +230,21 @@ def apply_gamble(player: dict, wager: int) -> tuple[dict, str]:
     if bool(p.get("true_mode", False)):
         is_win = random.random() < 0.5
         true_money = int(p.get("true_money", 0) or 0)
-        # Between -1 and +∞: step = 1. Below -1: loss doubles, win halves back up.
+        # -1 to 1: ±1 steps. Outside that: wins double / losses halve (positive), losses double / wins halve (negative).
         if is_win:
-            step = (abs(true_money) // 2) if true_money <= -2 else 1
+            if true_money >= 2:
+                step = true_money        # doubles: 2→4, 4→8, …
+            elif true_money <= -2:
+                step = abs(true_money) // 2  # halves back toward 0: -4→-2, …
+            else:
+                step = 1
         else:
-            step = abs(true_money) if true_money <= -1 else 1
+            if true_money >= 2:
+                step = true_money // 2   # halves: 8→4, 4→2, …
+            elif true_money <= -2:
+                step = abs(true_money)   # doubles negative: -2→-4, …
+            else:
+                step = 1
         delta = step if is_win else -step
         label = "WIN" if is_win else "LOSS"
         p["true_money"] = true_money + delta
