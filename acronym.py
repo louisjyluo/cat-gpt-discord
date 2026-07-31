@@ -18,17 +18,17 @@ def save_acronym_database():
     print(f"Error in save_acronym_database: {e}")
 
 
-def acronym(guild_id, phrase):
+def acronym(guild_id, phrase, author_id=None):
   guild_id = str(guild_id)
   normalized = phrase.strip()
   if len(normalized.replace(" ", "")) < 4:
     raise ValueError("Phrase must be at least 4 characters long.")
   if len(phrase.split()) == 1:
-    return word_acronym(guild_id, phrase)
-  return phrase_acronym(guild_id, phrase)
+    return word_acronym(guild_id, phrase, author_id)
+  return phrase_acronym(guild_id, phrase, author_id)
 
 
-def word_acronym(guild_id, word):
+def word_acronym(guild_id, word, author_id=None):
   normalized = word.strip()
   if len(normalized) < 4:
     raise ValueError("Word must be at least 4 characters long.")
@@ -37,13 +37,14 @@ def word_acronym(guild_id, word):
   existing = acronym_collection.find_one({'guild_id': guild_id, 'phrase': word.lower().strip()})
   if existing:
     raise ValueError(f"This acronym has already been added: **{existing['phrase']}** → {existing['acronym']}")
-  acronym_collection.insert_one(
-    {'guild_id': guild_id, 'phrase': word.lower().strip(), 'acronym': generated_acronym}
-  )
+  doc = {'guild_id': guild_id, 'phrase': word.lower().strip(), 'acronym': generated_acronym}
+  if author_id is not None:
+    doc['author_id'] = str(author_id)
+  acronym_collection.insert_one(doc)
   return generated_acronym
 
 
-def phrase_acronym(guild_id, phrase):
+def phrase_acronym(guild_id, phrase, author_id=None):
   parts = []
   for word in phrase.split():
     i = 0
@@ -61,9 +62,10 @@ def phrase_acronym(guild_id, phrase):
   existing = acronym_collection.find_one({'guild_id': guild_id, 'phrase': phrase.lower().strip()})
   if existing:
     raise ValueError(f"This acronym has already been added: **{existing['phrase']}** → {existing['acronym']}")
-  acronym_collection.insert_one(
-    {'guild_id': guild_id, 'phrase': phrase.lower().strip(), 'acronym': generated_acronym}
-  )
+  doc = {'guild_id': guild_id, 'phrase': phrase.lower().strip(), 'acronym': generated_acronym}
+  if author_id is not None:
+    doc['author_id'] = str(author_id)
+  acronym_collection.insert_one(doc)
   return generated_acronym
 
 

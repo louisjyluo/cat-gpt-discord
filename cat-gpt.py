@@ -7,7 +7,8 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
 from acronym import acronym, unacronym, unacronym_by_acronym, load_acronym_database, save_acronym_database, get_matching_acronym
-from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message
+from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, claim_acronym, unclaim_acronym
+from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
 from llm import chat, summarize_text
 from db import init_db, close_db, extract_collection_json, bulk_upload_collection, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
 from races.race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
@@ -68,6 +69,8 @@ protected_acro_phrases = {
     "redward",
     "catsum",
     "dict",
+    "claim",
+    "unclaim",
     "help"
 }
 HELP_MESSAGE = (
@@ -79,6 +82,10 @@ HELP_MESSAGE = (
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
   "- `dict .`: Lists all stored acronyms for this server.\n"
+  "- `claim <ACRO>`: Claim authorship of an acronym.\n"
+  "- `unclaim <ACRO>`: Remove your claim on an acronym.\n"
+  "- `claim <ACRO> <user>`: (Blouis only) Claim an acronym for another user.\n"
+  "- `unclaim <ACRO> <user>`: (Blouis only) Remove a user's claim on an acronym.\n"
   "- `extract <target>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `upload <target>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
@@ -290,7 +297,7 @@ async def handle_acro_command(msg, protected_phrases):
     await msg.reply("You can't acro bot commands.")
   elif acro_input:
     try:
-      created_acronym = acronym(str(msg.guild.id), acro_input)
+      created_acronym = acronym(str(msg.guild.id), acro_input, str(msg.author.id))
       await msg.reply(f"Acronym added: {created_acronym}")
     except ValueError as e:
       await msg.reply(str(e))
@@ -311,17 +318,10 @@ async def handle_dict_command(msg):
 
   if acro_input == ".":
     try:
-      pairs = list_all_acronyms(str(msg.guild.id))
-      if not pairs:
-        await msg.reply("No acronyms stored for this server.")
-      else:
-        lines = ["**All Acronyms:**"]
-        for acronym, phrase in pairs:
-          lines.append(f"**{acronym}** → {phrase}")
-        message = "\n".join(lines)
-        if len(message) > 1900:
-          message = message[:1900] + "\n...and more."
-        await msg.reply(message)
+      entries = list_all_acronyms(str(msg.guild.id))
+      embed = build_dict_embed(msg.guild.id, 0, entries)
+      view = DictView(msg.guild.id, page=0, entries=entries)
+      await msg.reply(embed=embed, view=view)
     except ValueError as e:
       await msg.reply(str(e))
     return True
@@ -443,6 +443,102 @@ async def handle_duel_command(msg):
   return True
 
 
+async def handle_claim_acro_command(msg):
+  if not msg.content.lower().startswith("claim"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  parts = msg.content.split()
+  if len(parts) < 2:
+    await msg.reply("Usage: `claim <ACRO>` or `claim <ACRO> <user>` (Blouis only)")
+    return True
+
+  acro_arg = parts[1]
+
+  if len(parts) >= 3:
+    if msg.author.id != BLOUIS_ID:
+      await msg.reply("Only Blouis can claim acronyms for other users.")
+      return True
+    user_arg = " ".join(parts[2:])
+    target_user_id = resolve_stim_target_id(msg, user_arg)
+    if target_user_id is None:
+      await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
+      return True
+  else:
+    target_user_id = msg.author.id
+
+  phrases = lookup_acronym(str(msg.guild.id), acro_arg)
+  if len(phrases) == 0:
+    await msg.reply(f"No acronym **{acro_arg.upper()}** found for this server.")
+    return True
+
+  if len(phrases) > 1:
+    view = ClaimSelectView(str(msg.guild.id), acro_arg, phrases, target_user_id, msg.author.id)
+    await msg.reply(f"**{acro_arg.upper()}** has multiple entries — which phrase do you mean?", view=view)
+    return True
+
+  try:
+    claim_acronym(str(msg.guild.id), acro_arg, target_user_id)
+    if target_user_id == msg.author.id:
+      await msg.reply(f"✅ You claimed **{acro_arg.upper()}**.")
+    else:
+      await msg.reply(f"✅ Claimed **{acro_arg.upper()}** for <@{target_user_id}>.")
+  except ValueError as e:
+    await msg.reply(str(e))
+  return True
+
+
+async def handle_unclaim_acro_command(msg):
+  if not msg.content.lower().startswith("unclaim"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  parts = msg.content.split()
+  if len(parts) < 2:
+    await msg.reply("Usage: `unclaim <ACRO>` or `unclaim <ACRO> <user>` (Blouis only)")
+    return True
+
+  acro_arg = parts[1]
+
+  if len(parts) >= 3:
+    if msg.author.id != BLOUIS_ID:
+      await msg.reply("Only Blouis can unclaim acronyms for other users.")
+      return True
+    user_arg = " ".join(parts[2:])
+    target_user_id = resolve_stim_target_id(msg, user_arg)
+    if target_user_id is None:
+      await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
+      return True
+  else:
+    target_user_id = msg.author.id
+
+  phrases = lookup_acronym(str(msg.guild.id), acro_arg)
+  if len(phrases) == 0:
+    await msg.reply(f"No acronym **{acro_arg.upper()}** found for this server.")
+    return True
+
+  if len(phrases) > 1:
+    view = UnclaimSelectView(str(msg.guild.id), acro_arg, phrases, target_user_id, msg.author.id)
+    await msg.reply(f"**{acro_arg.upper()}** has multiple entries — which phrase do you mean?", view=view)
+    return True
+
+  try:
+    unclaim_acronym(str(msg.guild.id), acro_arg, target_user_id)
+    if target_user_id == msg.author.id:
+      await msg.reply(f"✅ **{acro_arg.upper()}** has been unclaimed.")
+    else:
+      await msg.reply(f"✅ Removed claim on **{acro_arg.upper()}** from <@{target_user_id}>.")
+  except ValueError as e:
+    await msg.reply(str(e))
+  return True
+
+
 async def handle_exact_commands(msg, content_lower):
   match content_lower:
     case "help":
@@ -539,6 +635,8 @@ async def on_message(msg):
     "bank": handle_bank_command,
     "stim": handle_stim_command,
     "duel": handle_duel_command,
+    "claim": handle_claim_acro_command,
+    "unclaim": handle_unclaim_acro_command,
   }
 
   handler = prefix_handlers.get(command)
