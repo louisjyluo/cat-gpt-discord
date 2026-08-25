@@ -33,7 +33,6 @@ def get_or_create_player(guild_id, user_id, user_name: str) -> dict:
         _players[uid] = player
     else:
         _players[uid]["name"] = user_name
-        _players[uid]["money"] = get_user_balance(user_id)
 
     p = _players[uid]
     gid = str(guild_id)

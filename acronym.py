@@ -1,6 +1,16 @@
 from db import acronym_collection
 import random
 
+
+def normalize_reserved_acronym(value):
+  return "".join(char for char in value.upper() if char.isalnum())
+
+
+def validate_generated_acronym(generated_acronym, reserved_acronyms=None):
+  normalized = normalize_reserved_acronym(generated_acronym)
+  if reserved_acronyms and normalized in reserved_acronyms:
+    raise ValueError(f"You can't create the command **{generated_acronym}** as an acronym.")
+
 def load_acronym_database():
   """Load all acronyms from MongoDB into memory (optional, can query directly)."""
   try:
@@ -18,22 +28,23 @@ def save_acronym_database():
     print(f"Error in save_acronym_database: {e}")
 
 
-def acronym(guild_id, phrase, author_id=None):
+def acronym(guild_id, phrase, author_id=None, reserved_acronyms=None):
   guild_id = str(guild_id)
   normalized = phrase.strip()
   if len(normalized.replace(" ", "")) < 4:
     raise ValueError("Phrase must be at least 4 characters long.")
   if len(phrase.split()) == 1:
-    return word_acronym(guild_id, phrase, author_id)
-  return phrase_acronym(guild_id, phrase, author_id)
+    return word_acronym(guild_id, phrase, author_id, reserved_acronyms)
+  return phrase_acronym(guild_id, phrase, author_id, reserved_acronyms)
 
 
-def word_acronym(guild_id, word, author_id=None):
+def word_acronym(guild_id, word, author_id=None, reserved_acronyms=None):
   normalized = word.strip()
   if len(normalized) < 4:
     raise ValueError("Word must be at least 4 characters long.")
 
   generated_acronym = word[-(len(word) // 2):].upper()
+  validate_generated_acronym(generated_acronym, reserved_acronyms)
   existing = acronym_collection.find_one({'guild_id': guild_id, 'phrase': word.lower().strip()})
   if existing:
     raise ValueError(f"This acronym has already been added: **{existing['phrase']}** → {existing['acronym']}")
@@ -44,7 +55,7 @@ def word_acronym(guild_id, word, author_id=None):
   return generated_acronym
 
 
-def phrase_acronym(guild_id, phrase, author_id=None):
+def phrase_acronym(guild_id, phrase, author_id=None, reserved_acronyms=None):
   parts = []
   for word in phrase.split():
     i = 0
@@ -58,6 +69,7 @@ def phrase_acronym(guild_id, phrase, author_id=None):
 
   if not any(c.isalpha() for c in generated_acronym):
     raise ValueError("You can't acro a phrase of only numbers.")
+  validate_generated_acronym(generated_acronym, reserved_acronyms)
 
   existing = acronym_collection.find_one({'guild_id': guild_id, 'phrase': phrase.lower().strip()})
   if existing:
@@ -100,3 +112,13 @@ def unacronym_by_acronym(guild_id, acronym_str):
 
   result = acronym_collection.delete_one({'guild_id': guild_id, 'acronym': normalized})
   return result.deleted_count > 0
+
+
+def unacronym_all_by_author(guild_id, author_id):
+  guild_id = str(guild_id)
+  normalized_author_id = str(author_id).strip()
+  if not normalized_author_id:
+    raise ValueError("Author ID cannot be empty.")
+
+  result = acronym_collection.delete_many({'guild_id': guild_id, 'author_id': normalized_author_id})
+  return result.deleted_count

@@ -6,7 +6,7 @@ import random
 from discord.ext import commands
 from dotenv import load_dotenv
 from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
-from acronym import acronym, unacronym, unacronym_by_acronym, load_acronym_database, save_acronym_database, get_matching_acronym
+from acronym import acronym, unacronym, unacronym_by_acronym, unacronym_all_by_author, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
 from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, claim_acronym, unclaim_acronym
 from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
 from llm import chat, summarize_text
@@ -53,6 +53,7 @@ protected_acro_phrases = {
     "lex",
     "acro",
     "unacro",
+    "unacroall",
     "extract",
     "upload",
     "roll",
@@ -73,6 +74,8 @@ protected_acro_phrases = {
     "unclaim",
     "help"
 }
+reserved_acro_commands = protected_acro_phrases | {"catgpt summarize", "race history"}
+reserved_acronyms = {normalize_reserved_acronym(command) for command in reserved_acro_commands}
 HELP_MESSAGE = (
   "**CatGPT Commands**\n"
   "- `catgpt <message>`: Ask CatGPT a question.\n"
@@ -81,6 +84,7 @@ HELP_MESSAGE = (
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
+  "- `unacroall <user>`: (Blouis only) Removes every acronym created by that user.\n"
   "- `dict .`: Lists all stored acronyms for this server.\n"
   "- `claim <ACRO>`: Claim authorship of an acronym.\n"
   "- `unclaim <ACRO>`: Remove your claim on an acronym.\n"
@@ -297,7 +301,12 @@ async def handle_acro_command(msg, protected_phrases):
     await msg.reply("You can't acro bot commands.")
   elif acro_input:
     try:
-      created_acronym = acronym(str(msg.guild.id), acro_input, str(msg.author.id))
+      created_acronym = acronym(
+        str(msg.guild.id),
+        acro_input,
+        str(msg.author.id),
+        reserved_acronyms=reserved_acronyms
+      )
       await msg.reply(f"Acronym added: {created_acronym}")
     except ValueError as e:
       await msg.reply(str(e))
@@ -380,6 +389,38 @@ async def handle_unacro_command(msg):
   else:
     await msg.reply("Usage: unacro <word or phrase>")
   return False
+
+
+async def handle_unacroall_command(msg):
+  if not msg.content.lower().startswith("unacroall"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  if msg.author.id != BLOUIS_ID:
+    await msg.reply("Only Blouis can use unacroall.")
+    return True
+
+  parts = msg.content.split(maxsplit=1)
+  if len(parts) != 2:
+    await msg.reply("Usage: unacroall <user>")
+    return True
+
+  target_user_id = resolve_stim_target_id(msg, parts[1])
+  if target_user_id is None:
+    await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
+    return True
+
+  removed_count = unacronym_all_by_author(str(msg.guild.id), target_user_id)
+  if removed_count == 0:
+    await msg.reply(f"No acronyms found for <@{target_user_id}>.")
+  elif removed_count == 1:
+    await msg.reply(f"Removed 1 acronym created by <@{target_user_id}>.")
+  else:
+    await msg.reply(f"Removed {removed_count} acronyms created by <@{target_user_id}>.")
+  return True
 
 
 async def handle_bank_command(msg):
@@ -629,8 +670,9 @@ async def on_message(msg):
     "lex": handle_lex_command,
     "extract": handle_extract_command,
     "upload": handle_upload_command,
-    "acro": lambda current_msg: handle_acro_command(current_msg, protected_acro_phrases),
+    "acro": lambda current_msg: handle_acro_command(current_msg, reserved_acro_commands),
     "unacro": handle_unacro_command,
+    "unacroall": handle_unacroall_command,
     "dict": handle_dict_command,
     "bank": handle_bank_command,
     "stim": handle_stim_command,
