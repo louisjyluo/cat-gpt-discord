@@ -7,7 +7,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
 from acronym import acronym, unacronym, unacronym_by_acronym, unacronym_all_by_author, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
-from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, claim_acronym, unclaim_acronym
+from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, blame_acronym, claim_acronym, unclaim_acronym
 from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
 from llm import chat, summarize_text
 from db import init_db, close_db, extract_collection_json, bulk_upload_collection, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
@@ -71,6 +71,7 @@ protected_acro_phrases = {
     "catsum",
     "dict",
     "claim",
+    "blame",
     "unclaim",
     "help"
 }
@@ -87,6 +88,7 @@ HELP_MESSAGE = (
   "- `unacroall <user>`: (Blouis only) Removes every acronym created by that user.\n"
   "- `dict .`: Lists all stored acronyms for this server.\n"
   "- `claim <ACRO>`: Claim authorship of an acronym.\n"
+  "- `blame <ACRO>`: Show who owns an acronym.\n"
   "- `unclaim <ACRO>`: Remove your claim on an acronym.\n"
   "- `claim <ACRO> <user>`: (Blouis only) Claim an acronym for another user.\n"
   "- `unclaim <ACRO> <user>`: (Blouis only) Remove a user's claim on an acronym.\n"
@@ -532,6 +534,41 @@ async def handle_claim_acro_command(msg):
   return True
 
 
+async def handle_blame_acro_command(msg):
+  if not msg.content.lower().startswith("blame"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  parts = msg.content.split()
+  if len(parts) != 2:
+    await msg.reply("Usage: `blame <ACRO>`")
+    return True
+
+  acro_arg = parts[1]
+  entries = blame_acronym(str(msg.guild.id), acro_arg)
+  if not entries:
+    await msg.reply(f"No acronym **{acro_arg.upper()}** found for this server.")
+    return True
+
+  lines = []
+  for phrase, author_id in entries:
+    owner = "*(unclaimed)*"
+    if author_id:
+      member = msg.guild.get_member(int(author_id))
+      if member is None:
+        try:
+          member = await msg.guild.fetch_member(int(author_id))
+        except (discord.NotFound, discord.HTTPException, ValueError):
+          member = None
+      owner = member.display_name if member else "Unknown user"
+    lines.append(f"**{acro_arg.upper()}** → {phrase} — {owner}")
+  await msg.reply("\n".join(lines))
+  return True
+
+
 async def handle_unclaim_acro_command(msg):
   if not msg.content.lower().startswith("unclaim"):
     return False
@@ -678,6 +715,7 @@ async def on_message(msg):
     "stim": handle_stim_command,
     "duel": handle_duel_command,
     "claim": handle_claim_acro_command,
+    "blame": handle_blame_acro_command,
     "unclaim": handle_unclaim_acro_command,
   }
 

@@ -46,6 +46,21 @@ def lookup_acronym(guild_id, acronym_str):
   return [doc['phrase'] for doc in results]
 
 
+def blame_acronym(guild_id, acronym_str):
+  """Find the owner of each phrase stored under the given acronym."""
+  guild_id = str(guild_id)
+  normalized = acronym_str.strip().upper()
+  if not normalized:
+    raise ValueError("Acronym cannot be empty.")
+
+  results = list(acronym_collection.find(
+    {'guild_id': guild_id, 'acronym': normalized},
+    {'_id': 0, 'phrase': 1, 'author_id': 1}
+  ))
+
+  return [(doc['phrase'], doc.get('author_id')) for doc in results]
+
+
 def claim_acronym(guild_id, acronym_str, user_id, phrase=None):
   """Claim authorship of an acronym if it is currently unclaimed."""
   guild_id = str(guild_id)
