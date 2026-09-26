@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import re
 import discord
 import random
 from discord.ext import commands
@@ -73,7 +74,8 @@ protected_acro_phrases = {
     "claim",
     "blame",
     "unclaim",
-    "help"
+    "help",
+    "charades"
 }
 reserved_acro_commands = protected_acro_phrases | {"catgpt summarize", "race history"}
 reserved_acronyms = {normalize_reserved_acronym(command) for command in reserved_acro_commands}
@@ -84,6 +86,7 @@ HELP_MESSAGE = (
   "- `catsum <number>`: Summarizes the last x messages in the channel (max 50).\n"
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
   "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
+  "- `acro *`: (Blouis only) Lists all stored acronym phrases.\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
   "- `unacroall <user>`: (Blouis only) Removes every acronym created by that user.\n"
   "- `dict .`: Lists all stored acronyms for this server.\n"
@@ -92,6 +95,7 @@ HELP_MESSAGE = (
   "- `unclaim <ACRO>`: Remove your claim on an acronym.\n"
   "- `claim <ACRO> <user>`: (Blouis only) Claim an acronym for another user.\n"
   "- `unclaim <ACRO> <user>`: (Blouis only) Remove a user's claim on an acronym.\n"
+  "- `charades [number]`: Sends that many random acronym phrases (default 3, max 10).\n"
   "- `extract <target>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `upload <target>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
@@ -299,7 +303,42 @@ async def handle_acro_command(msg, protected_phrases):
     return True
 
   acro_input = msg.content[4:].lower().strip()
-  if acro_input in protected_phrases:
+  if acro_input == "*":
+    if msg.author.id != BLOUIS_ID:
+      await msg.reply("Only Blouis can use `acro *`.")
+      return True
+
+    entries = list_all_acronyms(str(msg.guild.id))
+    phrases = []
+    seen_phrases = set()
+    for _, phrase, _ in entries:
+      normalized_phrase = re.sub(r"[^A-Za-z ]", "", phrase)
+      normalized_key = normalized_phrase.lower()
+      if len(normalized_phrase.replace(" ", "")) <= 1 or not normalized_phrase.strip() or normalized_key in seen_phrases:
+        continue
+      seen_phrases.add(normalized_key)
+      phrases.append(normalized_phrase)
+    if not phrases:
+      await msg.reply("No acronym phrases found for this server.")
+      return True
+
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    for phrase in phrases:
+      separator_length = 2 if current_chunk else 0
+      if current_chunk and current_length + separator_length + len(phrase) > 2000:
+        chunks.append(", ".join(current_chunk))
+        current_chunk = []
+        current_length = 0
+      current_chunk.append(phrase)
+      current_length += (2 if len(current_chunk) > 1 else 0) + len(phrase)
+    if current_chunk:
+      chunks.append(", ".join(current_chunk))
+
+    for chunk in chunks:
+      await msg.reply(chunk)
+  elif acro_input in protected_phrases:
     await msg.reply("You can't acro bot commands.")
   elif acro_input:
     try:
@@ -569,6 +608,39 @@ async def handle_blame_acro_command(msg):
   return True
 
 
+async def handle_charades_command(msg):
+  if not msg.content.lower().startswith("charades"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  parts = msg.content.split()
+  count = 3
+  if len(parts) >= 2:
+    if not parts[1].isdigit():
+      await msg.reply("Usage: charades <number>")
+      return True
+    count = int(parts[1])
+
+  if count < 1:
+    await msg.reply("Number must be at least 1.")
+    return True
+
+  count = min(count, 10)
+
+  entries = list_all_acronyms(str(msg.guild.id))
+  phrases = [phrase for _, phrase, _ in entries if phrase.strip()]
+  if not phrases:
+    await msg.reply("No acronym phrases found for this server.")
+    return True
+
+  selected = random.sample(phrases, min(count, len(phrases)))
+  await msg.reply("\n".join(selected))
+  return True
+
+
 async def handle_unclaim_acro_command(msg):
   if not msg.content.lower().startswith("unclaim"):
     return False
@@ -690,7 +762,7 @@ async def handle_passive_reactions(msg):
 
 @client.event
 async def on_message(msg):
-  if msg.author == client.user:
+  if msg.author.bot:
     return
 
   content_lower = msg.content.lower().strip()
@@ -717,6 +789,7 @@ async def on_message(msg):
     "claim": handle_claim_acro_command,
     "blame": handle_blame_acro_command,
     "unclaim": handle_unclaim_acro_command,
+    "charades": handle_charades_command,
   }
 
   handler = prefix_handlers.get(command)
