@@ -7,7 +7,7 @@ import random
 from discord.ext import commands
 from dotenv import load_dotenv
 from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
-from acronym import acronym, unacronym, unacronym_by_acronym, unacronym_all_by_author, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
+from acronym import acronym, unacronym, unacronym_by_acronym, unacronym_all_by_author, ban_phrase, unban_phrase, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
 from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, blame_acronym, claim_acronym, unclaim_acronym
 from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
 from llm import chat, summarize_text
@@ -75,7 +75,9 @@ protected_acro_phrases = {
     "blame",
     "unclaim",
     "help",
-    "charades"
+    "charades",
+    "ban",
+    "unban"
 }
 reserved_acro_commands = protected_acro_phrases | {"catgpt summarize", "race history"}
 reserved_acronyms = {normalize_reserved_acronym(command) for command in reserved_acro_commands}
@@ -96,6 +98,8 @@ HELP_MESSAGE = (
   "- `claim <ACRO> <user>`: (Blouis only) Claim an acronym for another user.\n"
   "- `unclaim <ACRO> <user>`: (Blouis only) Remove a user's claim on an acronym.\n"
   "- `charades [number]`: Sends that many random acronym phrases (default 3, max 10).\n"
+  "- `ban <phrase>`: (Blouis only) Bans a phrase from being acro'd.\n"
+  "- `unban <phrase>`: (Blouis only) Unbans a phrase.\n"
   "- `extract <target>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `upload <target>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
@@ -408,7 +412,7 @@ async def handle_unacro_command(msg):
       await msg.reply("No `The Big <acro>` or `Acronym added: <acro>` found in the last 20 messages. Can't use `../` here.")
       return True
     try:
-      removed = unacronym_by_acronym(str(msg.guild.id), acro)
+      removed = unacronym_by_acronym(str(msg.guild.id), acro, msg.author.id, BLOUIS_ID)
       if removed:
         await msg.reply(f"Acronym removed: {acro}")
       else:
@@ -420,7 +424,7 @@ async def handle_unacro_command(msg):
   acro_input = acro_input.lower()
   if acro_input:
     try:
-      removed = unacronym(str(msg.guild.id), acro_input)
+      removed = unacronym(str(msg.guild.id), acro_input, msg.author.id, BLOUIS_ID)
       if removed:
         await msg.reply(f"Acronym removed: {acro_input}")
       else:
@@ -461,6 +465,62 @@ async def handle_unacroall_command(msg):
     await msg.reply(f"Removed 1 acronym created by <@{target_user_id}>.")
   else:
     await msg.reply(f"Removed {removed_count} acronyms created by <@{target_user_id}>.")
+  return True
+
+
+async def handle_ban_command(msg):
+  if not msg.content.lower().startswith("ban"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  if msg.author.id != BLOUIS_ID:
+    await msg.reply("Only Blouis can ban phrases.")
+    return True
+
+  phrase = msg.content[3:].strip()
+  if not phrase:
+    await msg.reply("Usage: ban <phrase>")
+    return True
+
+  try:
+    banned, existing_removed = ban_phrase(str(msg.guild.id), phrase)
+    if existing_removed:
+      await msg.reply(f"🚫 Banned phrase: **{banned}** (existing acronym for it was removed)")
+    else:
+      await msg.reply(f"🚫 Banned phrase: **{banned}**")
+  except ValueError as e:
+    await msg.reply(str(e))
+  return True
+
+
+async def handle_unban_command(msg):
+  if not msg.content.lower().startswith("unban"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  if msg.author.id != BLOUIS_ID:
+    await msg.reply("Only Blouis can unban phrases.")
+    return True
+
+  phrase = msg.content[5:].strip()
+  if not phrase:
+    await msg.reply("Usage: unban <phrase>")
+    return True
+
+  try:
+    removed = unban_phrase(str(msg.guild.id), phrase)
+    if removed:
+      await msg.reply(f"✅ Unbanned phrase: **{phrase.lower().strip()}**")
+    else:
+      await msg.reply("That phrase isn't banned.")
+  except ValueError as e:
+    await msg.reply(str(e))
   return True
 
 
@@ -790,6 +850,8 @@ async def on_message(msg):
     "blame": handle_blame_acro_command,
     "unclaim": handle_unclaim_acro_command,
     "charades": handle_charades_command,
+    "ban": handle_ban_command,
+    "unban": handle_unban_command,
   }
 
   handler = prefix_handlers.get(command)

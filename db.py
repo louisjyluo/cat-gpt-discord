@@ -16,6 +16,7 @@ gamble_collection = db['gamble']
 balance_collection = db['balances']
 racers_collection = db['racers']
 race_history_collection = db['race_history']
+banned_phrase_collection = db['banned_phrases']
 
 
 BULK_TARGET_ALIASES = {
@@ -44,6 +45,7 @@ def init_db():
     racers_collection.create_index([('guild_id', 1), ('owner_id', 1)])
     # Create index for race history dedupe
     race_history_collection.create_index([('guild_id', 1), ('race_signature', 1)], unique=True)
+    banned_phrase_collection.create_index([('guild_id', 1), ('phrase', 1)], unique=True)
     # Ensure money is sourced from balances only and keep gamble schema consistent.
     gamble_collection.update_many({}, {'$unset': {'money': ""}})
     gamble_collection.update_many(
