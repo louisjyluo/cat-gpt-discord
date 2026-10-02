@@ -30,34 +30,16 @@ def save_acronym_database():
 
 def acronym(guild_id, phrase, author_id=None, reserved_acronyms=None):
   guild_id = str(guild_id)
-  normalized = phrase.strip()
-  if len(normalized.replace(" ", "")) < 4:
-    raise ValueError("Phrase must be at least 4 characters long.")
-  if is_phrase_banned(guild_id, phrase):
-    raise ValueError(f"The phrase **{normalized.lower()}** is banned and can't be acro'd.")
+  generated_acronym = validate_acronym_candidate(guild_id, phrase, reserved_acronyms)
+  return finalize_acronym(guild_id, phrase, generated_acronym, author_id)
+
+
+def generate_acronym_string(phrase):
+  """Pure computation of the acronym letters for a word or phrase (no DB access)."""
   if len(phrase.split()) == 1:
-    return word_acronym(guild_id, phrase, author_id, reserved_acronyms)
-  return phrase_acronym(guild_id, phrase, author_id, reserved_acronyms)
+    word = phrase.strip()
+    return word[-(len(word) // 2):].upper()
 
-
-def word_acronym(guild_id, word, author_id=None, reserved_acronyms=None):
-  normalized = word.strip()
-  if len(normalized) < 4:
-    raise ValueError("Word must be at least 4 characters long.")
-
-  generated_acronym = word[-(len(word) // 2):].upper()
-  validate_generated_acronym(generated_acronym, reserved_acronyms)
-  existing = acronym_collection.find_one({'guild_id': guild_id, 'phrase': word.lower().strip()})
-  if existing:
-    raise ValueError(f"This acronym has already been added: **{existing['phrase']}** → {existing['acronym']}")
-  doc = {'guild_id': guild_id, 'phrase': word.lower().strip(), 'acronym': generated_acronym}
-  if author_id is not None:
-    doc['author_id'] = str(author_id)
-  acronym_collection.insert_one(doc)
-  return generated_acronym
-
-
-def phrase_acronym(guild_id, phrase, author_id=None, reserved_acronyms=None):
   parts = []
   for word in phrase.split():
     i = 0
@@ -68,14 +50,33 @@ def phrase_acronym(guild_id, phrase, author_id=None, reserved_acronyms=None):
     parts.append(prefix + first_alpha)
 
   generated_acronym = "".join(parts)
-
   if not any(c.isalpha() for c in generated_acronym):
     raise ValueError("You can't acro a phrase of only numbers.")
+  return generated_acronym
+
+
+def validate_acronym_candidate(guild_id, phrase, reserved_acronyms=None):
+  """Validate an acro request without persisting anything. Returns the generated acronym string."""
+  guild_id = str(guild_id)
+  normalized = phrase.strip()
+  if len(normalized.replace(" ", "")) < 4:
+    raise ValueError("Phrase must be at least 4 characters long.")
+  if is_phrase_banned(guild_id, phrase):
+    raise ValueError(f"The phrase **{normalized.lower()}** is banned and can't be acro'd.")
+
+  generated_acronym = generate_acronym_string(phrase)
   validate_generated_acronym(generated_acronym, reserved_acronyms)
 
   existing = acronym_collection.find_one({'guild_id': guild_id, 'phrase': phrase.lower().strip()})
   if existing:
     raise ValueError(f"This acronym has already been added: **{existing['phrase']}** → {existing['acronym']}")
+
+  return generated_acronym
+
+
+def finalize_acronym(guild_id, phrase, generated_acronym, author_id=None):
+  """Persist an acronym that has already been validated (e.g. after a vote passes)."""
+  guild_id = str(guild_id)
   doc = {'guild_id': guild_id, 'phrase': phrase.lower().strip(), 'acronym': generated_acronym}
   if author_id is not None:
     doc['author_id'] = str(author_id)

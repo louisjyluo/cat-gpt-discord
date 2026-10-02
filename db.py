@@ -1,6 +1,8 @@
 from pymongo import MongoClient
+from bson import ObjectId
 import os
 import json
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,6 +19,8 @@ balance_collection = db['balances']
 racers_collection = db['racers']
 race_history_collection = db['race_history']
 banned_phrase_collection = db['banned_phrases']
+init_notification_collection = db['InitNotifications']
+acro_vote_collection = db['acro_votes']
 
 
 BULK_TARGET_ALIASES = {
@@ -46,6 +50,8 @@ def init_db():
     # Create index for race history dedupe
     race_history_collection.create_index([('guild_id', 1), ('race_signature', 1)], unique=True)
     banned_phrase_collection.create_index([('guild_id', 1), ('phrase', 1)], unique=True)
+    init_notification_collection.create_index([('guild_id', 1), ('channel_id', 1)], unique=True)
+    acro_vote_collection.create_index([('guild_id', 1), ('phrase', 1)], unique=True)
     # Ensure money is sourced from balances only and keep gamble schema consistent.
     gamble_collection.update_many({}, {'$unset': {'money': ""}})
     gamble_collection.update_many(
@@ -55,6 +61,94 @@ def init_db():
     print("Database initialized successfully")
   except Exception as e:
     print(f"Error initializing database: {e}")
+
+
+def set_init_notification(guild_id, guild_name, channel_id, channel_name, enabled):
+  """Upsert whether a channel wants a ping when CatGPT comes online."""
+  init_notification_collection.update_one(
+    {'guild_id': str(guild_id), 'channel_id': str(channel_id)},
+    {'$set': {
+      'guild_id': str(guild_id),
+      'guild_name': guild_name,
+      'channel_id': str(channel_id),
+      'channel_name': channel_name,
+      'enabled': bool(enabled),
+    }},
+    upsert=True,
+  )
+
+
+def get_init_notification(guild_id, channel_id):
+  """Fetch the stored notification preference for a guild's channel, if any."""
+  return init_notification_collection.find_one({'guild_id': str(guild_id), 'channel_id': str(channel_id)})
+
+
+def get_enabled_init_notifications():
+  """List all channels that want a ping when CatGPT comes online."""
+  return list(init_notification_collection.find({'enabled': True}))
+
+
+def create_acro_vote(guild_id, phrase, generated_acronym, author_id, channel_id, threshold):
+  """Persist a pending acro vote. Raises if a vote for this phrase is already pending (unique index)."""
+  acro_vote_collection.insert_one({
+    'guild_id': str(guild_id),
+    'phrase': phrase.lower().strip(),
+    'acronym': generated_acronym,
+    'author_id': str(author_id) if author_id is not None else None,
+    'channel_id': str(channel_id) if channel_id is not None else None,
+    'threshold': int(threshold),
+    'check_voters': [],
+    'ban_voters': [],
+    'created_at': datetime.utcnow(),
+  })
+
+
+def get_pending_acro_vote(guild_id, phrase):
+  """Fetch a pending acro vote for this guild + phrase, if any."""
+  return acro_vote_collection.find_one({'guild_id': str(guild_id), 'phrase': phrase.lower().strip()})
+
+
+def list_pending_acro_votes(guild_id):
+  """List all pending acro votes for a guild, oldest first (used for the numbered votes panel)."""
+  return list(acro_vote_collection.find({'guild_id': str(guild_id)}).sort('created_at', 1))
+
+
+def get_acro_vote_by_id(vote_id):
+  """Fetch a pending acro vote by its Mongo _id."""
+  try:
+    oid = vote_id if isinstance(vote_id, ObjectId) else ObjectId(str(vote_id))
+  except Exception:
+    return None
+  return acro_vote_collection.find_one({'_id': oid})
+
+
+def delete_acro_vote_by_id(vote_id):
+  """Delete a pending acro vote by its Mongo _id. Returns True if one was removed."""
+  try:
+    oid = vote_id if isinstance(vote_id, ObjectId) else ObjectId(str(vote_id))
+  except Exception:
+    return False
+  result = acro_vote_collection.delete_one({'_id': oid})
+  return result.deleted_count > 0
+
+
+def add_check_vote(vote_id, user_id):
+  """Record a user's approve vote (deduped) and return the updated vote doc."""
+  oid = vote_id if isinstance(vote_id, ObjectId) else ObjectId(str(vote_id))
+  acro_vote_collection.update_one({'_id': oid}, {'$addToSet': {'check_voters': str(user_id)}})
+  return acro_vote_collection.find_one({'_id': oid})
+
+
+def add_ban_vote(vote_id, user_id):
+  """Record a user's ban vote (deduped) and return the updated vote doc."""
+  oid = vote_id if isinstance(vote_id, ObjectId) else ObjectId(str(vote_id))
+  acro_vote_collection.update_one({'_id': oid}, {'$addToSet': {'ban_voters': str(user_id)}})
+  return acro_vote_collection.find_one({'_id': oid})
+
+
+def get_expired_acro_votes(cutoff):
+  """List all pending acro votes created before the cutoff datetime."""
+  return list(acro_vote_collection.find({'created_at': {'$lt': cutoff}}))
 
 
 def log_race_result(guild_id, race_signature, turns, results):

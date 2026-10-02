@@ -4,14 +4,21 @@ import json
 import re
 import discord
 import random
-from discord.ext import commands
+from datetime import datetime, timedelta
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
-from acronym import acronym, unacronym, unacronym_by_acronym, unacronym_all_by_author, ban_phrase, unban_phrase, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
+from acronym import unacronym, unacronym_by_acronym, unacronym_all_by_author, ban_phrase, unban_phrase, validate_acronym_candidate, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
 from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, blame_acronym, claim_acronym, unclaim_acronym
 from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
+from acroVoteUI import VotesPanelView, build_votes_embed
 from llm import chat, summarize_text
-from db import init_db, close_db, extract_collection_json, bulk_upload_collection, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
+from db import (
+  init_db, close_db, extract_collection_json, bulk_upload_collection, get_user_balance, set_user_balance,
+  validate_bulk_password, validate_bulk_target, set_init_notification, get_init_notification,
+  get_enabled_init_notifications, create_acro_vote,
+  get_pending_acro_vote, list_pending_acro_votes, delete_acro_vote_by_id, get_expired_acro_votes,
+)
 from races.race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
 from races.racer_ui import RacersPanelView, build_racers_embed
 
@@ -36,6 +43,46 @@ def save_database():
 @client.event
 async def on_ready():
     print('We have logged in as {0.user}'.format(client))
+    for doc in get_enabled_init_notifications():
+      channel = client.get_channel(int(doc['channel_id']))
+      if channel is None:
+        try:
+          channel = await client.fetch_channel(int(doc['channel_id']))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+          continue
+      try:
+        await channel.send("🐱 CatGPT is up and running!")
+      except discord.HTTPException:
+        continue
+    if not expire_acro_votes.is_running():
+      expire_acro_votes.start()
+
+
+async def resolve_vote_channel(channel_id):
+  channel = client.get_channel(int(channel_id))
+  if channel is None:
+    try:
+      channel = await client.fetch_channel(int(channel_id))
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+      return None
+  return channel
+
+
+@tasks.loop(minutes=5)
+async def expire_acro_votes():
+  cutoff = datetime.utcnow() - timedelta(days=1)
+  for vote in get_expired_acro_votes(cutoff):
+    if not delete_acro_vote_by_id(vote['_id']):
+      continue
+    if vote.get('channel_id') is None:
+      continue
+    channel = await resolve_vote_channel(vote['channel_id'])
+    if channel is None:
+      continue
+    try:
+      await channel.send(f"⌛ The vote for **{vote['phrase']}** expired without enough votes. Use `acro {vote['phrase']}` to restart it.")
+    except discord.HTTPException:
+      pass
 
 Something = "Hi, I am Catgpt, I respond in meows"
 meow = ['meow']
@@ -77,7 +124,10 @@ protected_acro_phrases = {
     "help",
     "charades",
     "ban",
-    "unban"
+    "unban",
+    "notif",
+    "help_blouis",
+    "votes"
 }
 reserved_acro_commands = protected_acro_phrases | {"catgpt summarize", "race history"}
 reserved_acronyms = {normalize_reserved_acronym(command) for command in reserved_acro_commands}
@@ -87,24 +137,17 @@ HELP_MESSAGE = (
   "- `catgpt summarize` or `catsum`: Reply to a message to summarize it.\n"
   "- `catsum <number>`: Summarizes the last x messages in the channel (max 50).\n"
   "- `lex <word>`: Alphabetically sorts letters in the word.\n"
-  "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
-  "- `acro *`: (Blouis only) Lists all stored acronym phrases.\n"
+  "- `acro <phrase>`: Starts a vote to acro a word or phrase (needs 6-7 ✅ to pass, 7+ ❌ bans it).\n"
   "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
-  "- `unacroall <user>`: (Blouis only) Removes every acronym created by that user.\n"
   "- `dict .`: Lists all stored acronyms for this server.\n"
   "- `claim <ACRO>`: Claim authorship of an acronym.\n"
   "- `blame <ACRO>`: Show who owns an acronym.\n"
   "- `unclaim <ACRO>`: Remove your claim on an acronym.\n"
-  "- `claim <ACRO> <user>`: (Blouis only) Claim an acronym for another user.\n"
-  "- `unclaim <ACRO> <user>`: (Blouis only) Remove a user's claim on an acronym.\n"
   "- `charades [number]`: Sends that many random acronym phrases (default 3, max 10).\n"
-  "- `ban <phrase>`: (Blouis only) Bans a phrase from being acro'd.\n"
-  "- `unban <phrase>`: (Blouis only) Unbans a phrase.\n"
-  "- `extract <target>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
-  "- `upload <target>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
+  "- `notif`: Toggles whether this channel gets a ping when I come online.\n"
+  "- `votes`: Opens the acro votes panel (vote, ban, or stop a pending acro vote by number).\n"
   "- `roll`: Rolls a random number from 1 to 1000.\n"
   "- `bank [username]`: Shows your balance or another user's balance.\n"
-  "- `stim <username> <$amount>`: Adds money to a user's balance (Blouis only).\n"
   "- `duel @user`: Duel another player (requires Wrath sin). Higher roll wins; loser resets to floor.\n"
   "- `racer`: Opens your racers UI (alias of `racers`).\n"
   "- `racers`: Opens your racers UI (create racer + form by index).\n"
@@ -116,6 +159,19 @@ HELP_MESSAGE = (
   "- `blouis`: Sends the Blouis image.\n"
   "- `redward`: Sends the Redward image.\n"
   "- `help`: Shows this command list."
+)
+HELP_BLOUIS_MESSAGE = (
+  "**CatGPT Blouis-only Commands**\n"
+  "- `acro *`: Lists all stored acronym phrases.\n"
+  "- `unacroall <user>`: Removes every acronym created by that user.\n"
+  "- `claim <ACRO> <user>`: Claim an acronym for another user.\n"
+  "- `unclaim <ACRO> <user>`: Remove a user's claim on an acronym.\n"
+  "- `ban <phrase>`: Bans a phrase from being acro'd.\n"
+  "- `unban <phrase>`: Unbans a phrase.\n"
+  "- `extract <target>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`).\n"
+  "- `upload <target>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`).\n"
+  "- `stim <username> <$amount>`: Adds money to a user's balance.\n"
+  "- `help_blouis`: Shows this command list."
 )
 
 def alphabetize(word):
@@ -345,16 +401,21 @@ async def handle_acro_command(msg, protected_phrases):
   elif acro_input in protected_phrases:
     await msg.reply("You can't acro bot commands.")
   elif acro_input:
+    if get_pending_acro_vote(str(msg.guild.id), acro_input):
+      await msg.reply("A vote for that phrase is already in progress.")
+      return True
+
     try:
-      created_acronym = acronym(
-        str(msg.guild.id),
-        acro_input,
-        str(msg.author.id),
-        reserved_acronyms=reserved_acronyms
-      )
-      await msg.reply(f"Acronym added: {created_acronym}")
+      generated_acronym = validate_acronym_candidate(str(msg.guild.id), acro_input, reserved_acronyms)
     except ValueError as e:
       await msg.reply(str(e))
+      return True
+
+    threshold = random.choice([6, 7])
+    create_acro_vote(str(msg.guild.id), acro_input, generated_acronym, msg.author.id, None, threshold)
+
+    votes = list_pending_acro_votes(str(msg.guild.id))
+    await msg.reply(embed=build_votes_embed(msg.guild.id, votes), view=VotesPanelView(msg.guild.id, BLOUIS_ID))
   else:
     await msg.reply("Usage: acro <word or phrase>")
   return True
@@ -521,6 +582,25 @@ async def handle_unban_command(msg):
       await msg.reply("That phrase isn't banned.")
   except ValueError as e:
     await msg.reply(str(e))
+  return True
+
+
+async def handle_notif_command(msg):
+  if not msg.content.lower().startswith("notif"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  current = get_init_notification(str(msg.guild.id), str(msg.channel.id))
+  new_state = not (current and current.get("enabled"))
+  set_init_notification(str(msg.guild.id), msg.guild.name, str(msg.channel.id), msg.channel.name, new_state)
+
+  if new_state:
+    await msg.reply("🔔 This channel will get a ping when I come online.")
+  else:
+    await msg.reply("🔕 This channel will no longer get startup pings.")
   return True
 
 
@@ -754,11 +834,24 @@ async def handle_exact_commands(msg, content_lower):
     case "help":
       await msg.reply(HELP_MESSAGE)
       return False
+    case "help_blouis":
+      if msg.author.id != BLOUIS_ID:
+        await msg.reply("Only Blouis can use help_blouis.")
+      else:
+        await msg.reply(HELP_BLOUIS_MESSAGE)
+      return False
     case "roll":
       await msg.reply(game())
       return False
     case "gamble":
       await send_gamble_panel(msg)
+      return False
+    case "votes":
+      if msg.guild is None:
+        await msg.reply("The votes panel only works in a server.")
+      else:
+        votes = list_pending_acro_votes(str(msg.guild.id))
+        await msg.reply(embed=build_votes_embed(msg.guild.id, votes), view=VotesPanelView(msg.guild.id, BLOUIS_ID))
       return False
     case "racer" | "racers":
       if msg.guild is None:
@@ -852,6 +945,7 @@ async def on_message(msg):
     "charades": handle_charades_command,
     "ban": handle_ban_command,
     "unban": handle_unban_command,
+    "notif": handle_notif_command,
   }
 
   handler = prefix_handlers.get(command)
