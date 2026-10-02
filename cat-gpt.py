@@ -1,17 +1,20 @@
 import os
-import io
-import json
 import re
 import discord
 import random
 from discord.ext import commands
 from dotenv import load_dotenv
-from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database, send_duel_command
+from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database
 from acronym import acronym, unacronym, unacronym_by_acronym, unacronym_all_by_author, ban_phrase, unban_phrase, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
 from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, blame_acronym, claim_acronym, unclaim_acronym
 from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
+from helpUI import HelpView, build_help_embed
 from llm import chat, summarize_text
-from db import init_db, close_db, extract_collection_json, bulk_upload_collection, get_user_balance, set_user_balance, validate_bulk_password, validate_bulk_target
+from db import (
+  init_db, close_db, get_user_balance, set_user_balance,
+  set_init_notification, get_init_notification,
+  get_enabled_init_notifications, upsert_contributor,
+)
 from races.race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
 from races.racer_ui import RacersPanelView, build_racers_embed
 
@@ -36,6 +39,17 @@ def save_database():
 @client.event
 async def on_ready():
     print('We have logged in as {0.user}'.format(client))
+    for doc in get_enabled_init_notifications():
+      channel = client.get_channel(int(doc['channel_id']))
+      if channel is None:
+        try:
+          channel = await client.fetch_channel(int(doc['channel_id']))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+          continue
+      try:
+        await channel.send("🐱 CatGPT is up and running!")
+      except discord.HTTPException:
+        continue
 
 Something = "Hi, I am Catgpt, I respond in meows"
 meow = ['meow']
@@ -55,12 +69,9 @@ protected_acro_phrases = {
     "acro",
     "unacro",
     "unacroall",
-    "extract",
-    "upload",
     "roll",
     "bank",
     "stim",
-    "duel",
     "racer",
     "racers",
     "race",
@@ -77,46 +88,11 @@ protected_acro_phrases = {
     "help",
     "charades",
     "ban",
-    "unban"
+    "unban",
+    "notif"
 }
 reserved_acro_commands = protected_acro_phrases | {"catgpt summarize", "race history"}
 reserved_acronyms = {normalize_reserved_acronym(command) for command in reserved_acro_commands}
-HELP_MESSAGE = (
-  "**CatGPT Commands**\n"
-  "- `catgpt <message>`: Ask CatGPT a question.\n"
-  "- `catgpt summarize` or `catsum`: Reply to a message to summarize it.\n"
-  "- `catsum <number>`: Summarizes the last x messages in the channel (max 50).\n"
-  "- `lex <word>`: Alphabetically sorts letters in the word.\n"
-  "- `acro <phrase>`: Creates/stores an acronym for a word or phrase.\n"
-  "- `acro *`: (Blouis only) Lists all stored acronym phrases.\n"
-  "- `unacro <phrase>`: Removes a stored acronym for a word or phrase.\n"
-  "- `unacroall <user>`: (Blouis only) Removes every acronym created by that user.\n"
-  "- `dict .`: Lists all stored acronyms for this server.\n"
-  "- `claim <ACRO>`: Claim authorship of an acronym.\n"
-  "- `blame <ACRO>`: Show who owns an acronym.\n"
-  "- `unclaim <ACRO>`: Remove your claim on an acronym.\n"
-  "- `claim <ACRO> <user>`: (Blouis only) Claim an acronym for another user.\n"
-  "- `unclaim <ACRO> <user>`: (Blouis only) Remove a user's claim on an acronym.\n"
-  "- `charades [number]`: Sends that many random acronym phrases (default 3, max 10).\n"
-  "- `ban <phrase>`: (Blouis only) Bans a phrase from being acro'd.\n"
-  "- `unban <phrase>`: (Blouis only) Unbans a phrase.\n"
-  "- `extract <target>`: Exports DB data as JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
-  "- `upload <target>`: Bulk imports JSON (`acro`, `gamble`, `balances`, `racers`, `race_history`) if you are Blouis.\n"
-  "- `roll`: Rolls a random number from 1 to 1000.\n"
-  "- `bank [username]`: Shows your balance or another user's balance.\n"
-  "- `stim <username> <$amount>`: Adds money to a user's balance (Blouis only).\n"
-  "- `duel @user`: Duel another player (requires Wrath sin). Higher roll wins; loser resets to floor.\n"
-  "- `racer`: Opens your racers UI (alias of `racers`).\n"
-  "- `racers`: Opens your racers UI (create racer + form by index).\n"
-  "- `race`: Opens the race panel.\n"
-  "- `race history`: Shows last 10 races with details button.\n"
-  "- `gamble`: Opens the gambling panel.\n"
-  "- `say hi`: Bot says hello.\n"
-  "- `cat`: Sends the cat gif.\n"
-  "- `blouis`: Sends the Blouis image.\n"
-  "- `redward`: Sends the Redward image.\n"
-  "- `help`: Shows this command list."
-)
 
 def alphabetize(word):
     lower_case = word.lower()
@@ -222,80 +198,6 @@ async def handle_lex_command(msg):
   if msg.content.startswith("lex"):
     await msg.reply(alphabetize(msg.content[3:]))
   return False
-
-
-async def handle_extract_command(msg):
-  if not msg.content.startswith("extract"):
-    return False
-
-  parts = msg.content[7:].lower().strip().split()
-  if len(parts) < 1:
-    await msg.reply("Usage: extract <target> (targets: acro, gamble, balances, racers, race_history)")
-    return True
-
-  extract_target = parts[0]
-
-  try:
-    extract_target = validate_bulk_target(extract_target)
-    validate_bulk_password(msg.author.id)
-  except ValueError as e:
-    await msg.reply(f"❌ {e}")
-    return True
-
-  try:
-    json_payload, export_filename = extract_collection_json(extract_target)
-    export_file = discord.File(
-      fp=io.BytesIO(json_payload.encode("utf-8")),
-      filename=export_filename
-    )
-    await msg.reply(f"Here is your {extract_target} database export.", file=export_file)
-  except Exception as e:
-    await msg.reply(f"Failed to export data: {e}")
-  return True
-
-
-async def handle_upload_command(msg):
-  if not msg.content.startswith("upload"):
-    return False
-
-  parts = msg.content[6:].lower().strip().split()
-  if len(parts) < 1:
-    await msg.reply("Usage: upload <target> (targets: acro, gamble, balances, racers, race_history; attach JSON)")
-    return True
-
-  upload_target = parts[0]
-
-  try:
-    upload_target = validate_bulk_target(upload_target)
-    validate_bulk_password(msg.author.id)
-  except ValueError as e:
-    await msg.reply(f"❌ {e}")
-    return True
-
-  if not msg.attachments:
-    await msg.reply("Please attach a JSON file to upload.")
-    return True
-
-  attachment = msg.attachments[0]
-  if not attachment.filename.endswith('.json'):
-    await msg.reply("File must be a JSON file (.json)")
-    return True
-
-  try:
-    file_content = await attachment.read()
-    data = json.loads(file_content.decode('utf-8'))
-
-    result = bulk_upload_collection(upload_target, data)
-    await msg.reply(f"✅ {upload_target}: {result}")
-
-    load_database()
-  except json.JSONDecodeError:
-    await msg.reply("❌ Invalid JSON file format.")
-  except ValueError as e:
-    await msg.reply(f"❌ Data validation error: {e}")
-  except Exception as e:
-    await msg.reply(f"❌ Upload failed: {e}")
-  return True
 
 
 async def handle_acro_command(msg, protected_phrases):
@@ -524,6 +426,25 @@ async def handle_unban_command(msg):
   return True
 
 
+async def handle_notif_command(msg):
+  if not msg.content.lower().startswith("notif"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  current = get_init_notification(str(msg.guild.id), str(msg.channel.id))
+  new_state = not (current and current.get("enabled"))
+  set_init_notification(str(msg.guild.id), msg.guild.name, str(msg.channel.id), msg.channel.name, new_state)
+
+  if new_state:
+    await msg.reply("🔔 This channel will get a ping when I come online.")
+  else:
+    await msg.reply("🔕 This channel will no longer get startup pings.")
+  return True
+
+
 async def handle_bank_command(msg):
   if not msg.content.startswith("bank"):
     return False
@@ -577,14 +498,6 @@ async def handle_stim_command(msg):
   return True
 
 
-async def handle_duel_command(msg):
-  if not msg.content.lower().startswith("duel "):
-    return False
-  opponent_input = msg.content[5:].strip()
-  await send_duel_command(msg, opponent_input)
-  return True
-
-
 async def handle_claim_acro_command(msg):
   if not msg.content.lower().startswith("claim"):
     return False
@@ -623,7 +536,9 @@ async def handle_claim_acro_command(msg):
     return True
 
   try:
-    claim_acronym(str(msg.guild.id), acro_arg, target_user_id)
+    target_member = msg.guild.get_member(target_user_id)
+    display_name = target_member.display_name if target_member else None
+    claim_acronym(str(msg.guild.id), acro_arg, target_user_id, display_name=display_name)
     if target_user_id == msg.author.id:
       await msg.reply(f"✅ You claimed **{acro_arg.upper()}**.")
     else:
@@ -663,6 +578,8 @@ async def handle_blame_acro_command(msg):
         except (discord.NotFound, discord.HTTPException, ValueError):
           member = None
       owner = member.display_name if member else "Unknown user"
+      if member:
+        upsert_contributor(str(msg.guild.id), author_id, member.display_name)
     lines.append(f"**{acro_arg.upper()}** → {phrase} — {owner}")
   await msg.reply("\n".join(lines))
   return True
@@ -752,7 +669,7 @@ async def handle_unclaim_acro_command(msg):
 async def handle_exact_commands(msg, content_lower):
   match content_lower:
     case "help":
-      await msg.reply(HELP_MESSAGE)
+      await msg.reply(embed=build_help_embed(0), view=HelpView())
       return False
     case "roll":
       await msg.reply(game())
@@ -820,9 +737,20 @@ async def handle_passive_reactions(msg):
   if any(word in msg.content for word in meow):
     await msg.reply(meowSeparate(msg.content))
 
+def has_ignore_flag(content):
+  """A standalone '-c' as the first or last word opts a message out of all bot handling."""
+  tokens = content.split()
+  if not tokens:
+    return False
+  return tokens[0].lower() == "-c" or tokens[-1].lower() == "-c"
+
+
 @client.event
 async def on_message(msg):
   if msg.author.bot:
+    return
+
+  if has_ignore_flag(msg.content):
     return
 
   content_lower = msg.content.lower().strip()
@@ -837,21 +765,19 @@ async def on_message(msg):
 
   prefix_handlers = {
     "lex": handle_lex_command,
-    "extract": handle_extract_command,
-    "upload": handle_upload_command,
     "acro": lambda current_msg: handle_acro_command(current_msg, reserved_acro_commands),
     "unacro": handle_unacro_command,
     "unacroall": handle_unacroall_command,
     "dict": handle_dict_command,
     "bank": handle_bank_command,
     "stim": handle_stim_command,
-    "duel": handle_duel_command,
     "claim": handle_claim_acro_command,
     "blame": handle_blame_acro_command,
     "unclaim": handle_unclaim_acro_command,
     "charades": handle_charades_command,
     "ban": handle_ban_command,
     "unban": handle_unban_command,
+    "notif": handle_notif_command,
   }
 
   handler = prefix_handlers.get(command)

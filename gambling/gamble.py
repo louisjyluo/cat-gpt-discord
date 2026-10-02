@@ -13,7 +13,6 @@ No game rules live here. No direct MongoDB calls.
 """
 from __future__ import annotations
 
-import re
 import time
 
 import discord
@@ -29,7 +28,6 @@ from .gamble_logic import (
     apply_toggle_true_mode,
     get_base_balance,
     get_gamble_cooldown,
-    resolve_duel,
 )
 from .gamble_state import (
     get_last_gamble_at,
@@ -54,7 +52,7 @@ from .gamble_ui import (
 )
 
 # Re-export for cat-gpt.py
-__all__ = ["send_gamble_panel", "send_duel_command", "load_gamble_database", "save_gamble_database"]
+__all__ = ["send_gamble_panel", "load_gamble_database", "save_gamble_database"]
 
 
 # ─── Panel helpers ────────────────────────────────────────────────────────────
@@ -352,63 +350,6 @@ async def _on_true_roll(interaction: discord.Interaction) -> None:
     save_player(interaction.user.id, str(interaction.guild_id), new_player)
     await interaction.response.defer()
     await _show_gamble_panel(interaction, new_player)
-
-
-# ─── Duel (text command, requires Wrath) ─────────────────────────────────────
-
-async def send_duel_command(msg: discord.Message, opponent_input: str) -> None:
-    if msg.guild is None:
-        await msg.reply("Duels only work in a server.")
-        return
-
-    challenger = get_or_create_player(msg.guild.id, msg.author.id, msg.author.display_name)
-
-    match = re.search(r"\d{15,20}", opponent_input.strip())
-    if not match:
-        await msg.reply("Could not find a valid user mention or ID. Usage: `duel @user`")
-        return
-
-    opponent_id = int(match.group(0))
-    if opponent_id == msg.author.id:
-        await msg.reply("You can't duel yourself.")
-        return
-
-    try:
-        member = msg.guild.get_member(opponent_id) or await msg.guild.fetch_member(opponent_id)
-    except Exception:
-        await msg.reply("Could not find that user in this server.")
-        return
-
-    opponent = get_or_create_player(msg.guild.id, opponent_id, member.display_name)
-
-    winner, c_roll, o_roll, c_max = resolve_duel(challenger, opponent)
-    c_name, o_name = msg.author.display_name, member.display_name
-
-    if winner == "challenger":
-        loser, loser_id, loser_name, winner_name = opponent, opponent_id, o_name, c_name
-    else:
-        loser, loser_id, loser_name, winner_name = challenger, msg.author.id, c_name, o_name
-
-    old_money = int(loser.get("money", 1))
-    floor = get_base_balance(loser)
-    new_loser = dict(loser)
-    new_loser["money"] = floor
-    new_loser["last_amount_change"] = floor - old_money
-    new_loser["last_multiplier"] = "DUEL LOSS"
-    new_loser["win_streak"] = 0
-    save_player(loser_id, str(msg.guild.id), new_loser)
-
-    o_balance = int(opponent.get("money", 1))
-    lines = [
-        f"**DUEL** — {c_name} vs {o_name}",
-        "",
-        f"{c_name} rolled **{c_roll:,.1f}** / {c_max:,.0f}",
-        f"{o_name} rolled **{o_roll:,.1f}** / {o_balance:,}",
-        "",
-        f"**{winner_name}** wins!",
-        f"**{loser_name}** resets to ${floor:,}.",
-    ]
-    await msg.reply("\n".join(lines))
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────

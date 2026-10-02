@@ -1,5 +1,5 @@
 import re
-from db import acronym_collection
+from db import acronym_collection, upsert_contributor
 
 
 def find_acronyms_in_message(guild_id, message_content):
@@ -61,7 +61,7 @@ def blame_acronym(guild_id, acronym_str):
   return [(doc['phrase'], doc.get('author_id')) for doc in results]
 
 
-def claim_acronym(guild_id, acronym_str, user_id, phrase=None):
+def claim_acronym(guild_id, acronym_str, user_id, phrase=None, display_name=None):
   """Claim authorship of an acronym if it is currently unclaimed."""
   guild_id = str(guild_id)
   normalized = acronym_str.strip().upper()
@@ -86,6 +86,7 @@ def claim_acronym(guild_id, acronym_str, user_id, phrase=None):
     {'_id': doc['_id']},
     {'$set': {'author_id': user_id}}
   )
+  upsert_contributor(guild_id, user_id, display_name)
 
 
 def unclaim_acronym(guild_id, acronym_str, user_id, phrase=None):

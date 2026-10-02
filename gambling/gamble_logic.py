@@ -376,19 +376,6 @@ def apply_purchase_ability(player: dict, key: str) -> tuple[dict, Optional[str]]
     return p, None
 
 
-def resolve_duel(challenger: dict, opponent: dict) -> tuple[str, float, float, float]:
-    """
-    Returns (winner, challenger_roll, opponent_roll, challenger_max).
-    winner is 'challenger' or 'opponent'.
-    """
-    cb = max(1, int(challenger.get("money", 1) or 1))
-    ob = max(1, int(opponent.get("money", 1) or 1))
-    cmax = min(cb, 5 * ob)
-    cr = random.uniform(0, cmax)
-    or_ = random.uniform(0, ob)
-    return ("challenger" if cr >= or_ else "opponent"), cr, or_, cmax
-
-
 def apply_toggle_true_mode(player: dict) -> dict:
     """Toggle true mode on/off. Returns a new player dict."""
     p = dict(player)

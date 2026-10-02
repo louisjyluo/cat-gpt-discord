@@ -160,24 +160,6 @@ def build_true_gamble_embed(player: dict) -> discord.Embed:
     embed.add_field(name="Last Result", value=str(player.get("last_multiplier", "N/A")), inline=True)
     return embed
 
-# ─── Modals ───────────────────────────────────────────────────────────────────
-
-class DuelChallengeModal(discord.ui.Modal):
-    def __init__(self, on_submit):
-        super().__init__(title="Challenge to a Duel")
-        self._on_submit = on_submit
-        self.opponent_input = discord.ui.TextInput(
-            label="Opponent (@mention or user ID)",
-            placeholder="@username or 123456789",
-            required=True,
-            max_length=64,
-        )
-        self.add_item(self.opponent_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await self._on_submit(interaction, str(self.opponent_input.value))
-
-
 # ─── Views ────────────────────────────────────────────────────────────────────
 
 class GambleView(discord.ui.View):

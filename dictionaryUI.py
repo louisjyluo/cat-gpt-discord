@@ -1,13 +1,14 @@
 import discord
 from dictionary import list_all_acronyms, claim_acronym, unclaim_acronym
+from db import get_contributor_names, upsert_contributor
 
 PAGE_SIZE = 10
 
 
-def _filter_by_prefix(entries, prefix):
-    """Filter (acronym, phrase, author_id) tuples where the acronym starts with prefix (case-insensitive)."""
-    prefix_upper = prefix.strip().upper()
-    return [entry for entry in entries if entry[0].startswith(prefix_upper)]
+def _filter_by_prefix(entries, search_text):
+    """Filter (acronym, phrase, author_id) tuples where the phrase contains search_text (case-insensitive, like SQL ILIKE)."""
+    search_lower = search_text.strip().lower()
+    return [entry for entry in entries if search_lower in entry[1].lower()]
 
 
 def _filter_by_author(entries, author_id):
@@ -25,7 +26,7 @@ def build_dict_embed(guild_id, page, entries, search_prefix=None, search_owner=N
 
     title = "Server Acronym Dictionary"
     if search_prefix:
-        title += f" — prefix: {search_prefix.upper()}"
+        title += f" — search: {search_prefix}"
     if search_owner:
         title += f" — owner: {search_owner}"
 
@@ -33,7 +34,7 @@ def build_dict_embed(guild_id, page, entries, search_prefix=None, search_owner=N
 
     if not slice_:
         embed.description = (
-            f"No acronyms found with prefix **{search_prefix.upper()}**."
+            f"No acronyms found matching **{search_prefix}**."
             if search_prefix
             else f"No acronyms owned by **{search_owner}**."
             if search_owner
@@ -49,10 +50,10 @@ def build_dict_embed(guild_id, page, entries, search_prefix=None, search_owner=N
     return embed
 
 
-class DictSearchModal(discord.ui.Modal, title="Search by Prefix"):
+class DictSearchModal(discord.ui.Modal, title="Search Acronyms"):
     prefix_input = discord.ui.TextInput(
-        label="Acronym Prefix",
-        placeholder="e.g. WTF, GG, BL...",
+        label="Phrase Contains",
+        placeholder="e.g. what the, good game...",
         max_length=20,
         required=True,
     )
@@ -156,23 +157,30 @@ class DictView(discord.ui.View):
 
     @discord.ui.button(label="Owner", style=discord.ButtonStyle.primary, row=1)
     async def owner_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         entries = list_all_acronyms(str(self.guild_id))
         owner_ids = {str(author_id) for _, _, author_id in entries if author_id}
+        if not owner_ids:
+            await interaction.followup.send("No users in this server have claimed an acronym.", ephemeral=True)
+            return
+
+        cached_names = get_contributor_names(str(self.guild_id))
         owners = []
         for owner_id in owner_ids:
-            member = interaction.guild.get_member(int(owner_id))
-            if member is None:
-                try:
-                    member = await interaction.guild.fetch_member(int(owner_id))
-                except (discord.NotFound, discord.HTTPException, ValueError):
-                    member = None
-            if member is not None:
-                owners.append((member.id, member.display_name))
+            display_name = cached_names.get(owner_id)
+            if display_name is None:
+                member = interaction.guild.get_member(int(owner_id))
+                if member is None:
+                    try:
+                        member = await interaction.guild.fetch_member(int(owner_id))
+                    except (discord.NotFound, discord.HTTPException, ValueError):
+                        member = None
+                display_name = member.display_name if member else f"Unknown user ({owner_id})"
+                if member:
+                    upsert_contributor(self.guild_id, owner_id, display_name)
+            owners.append((int(owner_id), display_name))
         owners.sort(key=lambda owner: owner[1].lower())
-        if not owners:
-            await interaction.response.send_message("No users in this server have claimed an acronym.", ephemeral=True)
-            return
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "Choose a user to filter the dictionary:",
             view=OwnerSelectView(self.guild_id, interaction.message, owners),
             ephemeral=True,
@@ -208,7 +216,9 @@ class ClaimSelectView(discord.ui.View):
             return
         phrase = interaction.data['values'][0]
         try:
-            claim_acronym(self.guild_id, self.acronym_str, self.target_user_id, phrase=phrase)
+            target_member = interaction.guild.get_member(self.target_user_id)
+            display_name = target_member.display_name if target_member else None
+            claim_acronym(self.guild_id, self.acronym_str, self.target_user_id, phrase=phrase, display_name=display_name)
             if self.target_user_id == self.claimer_id:
                 await interaction.response.edit_message(content=f"✅ Claimed **{self.acronym_str}** → {phrase}.", view=None)
             else:
