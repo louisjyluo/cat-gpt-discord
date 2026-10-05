@@ -15,6 +15,8 @@ REGULAR_COMMANDS = [
   "`unclaim <ACRO>`: Remove your claim on an acronym.",
   "`charades [number]`: Sends that many random acronym phrases (default 3, max 10).",
   "`notif`: Toggles whether this channel gets a ping when I come online.",
+  "`i_hate_fun`: Opts you out of acro/dict commands and acronym auto-responses.",
+  "`i_love_fun`: Opts you back into acro/dict commands and acronym auto-responses.",
   "`roll`: Rolls a random number from 1 to 1000.",
   "`bank [username]`: Shows your balance or another user's balance.",
   "`racer`: Opens your racers UI (alias of `racers`).",

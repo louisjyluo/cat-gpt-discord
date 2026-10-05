@@ -14,6 +14,7 @@ from db import (
   init_db, close_db, get_user_balance, set_user_balance,
   set_init_notification, get_init_notification,
   get_enabled_init_notifications, upsert_contributor,
+  set_fun_opt_out, is_fun_opt_out,
 )
 from races.race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
 from races.racer_ui import RacersPanelView, build_racers_embed
@@ -89,7 +90,9 @@ protected_acro_phrases = {
     "charades",
     "ban",
     "unban",
-    "notif"
+    "notif",
+    "i_hate_fun",
+    "i_love_fun"
 }
 reserved_acro_commands = protected_acro_phrases | {"catgpt summarize", "race history"}
 reserved_acronyms = {normalize_reserved_acronym(command) for command in reserved_acro_commands}
@@ -208,6 +211,10 @@ async def handle_acro_command(msg, protected_phrases):
     await msg.reply("This command only works in a server.")
     return True
 
+  if is_fun_opt_out(msg.author.id):
+    await msg.reply("You've opted out of acro/dict. Use `i_hate_fun` to opt back in.")
+    return True
+
   acro_input = msg.content[4:].lower().strip()
   if acro_input == "*":
     if msg.author.id != BLOUIS_ID:
@@ -268,6 +275,10 @@ async def handle_dict_command(msg):
 
   if msg.guild is None:
     await msg.reply("This command only works in a server.")
+    return True
+
+  if is_fun_opt_out(msg.author.id):
+    await msg.reply("You've opted out of acro/dict. Use `i_hate_fun` to opt back in.")
     return True
 
   acro_input = msg.content[4:].strip()
@@ -442,6 +453,32 @@ async def handle_notif_command(msg):
     await msg.reply("🔔 This channel will get a ping when I come online.")
   else:
     await msg.reply("🔕 This channel will no longer get startup pings.")
+  return True
+
+
+async def handle_i_hate_fun_command(msg):
+  if not msg.content.lower().startswith("i_hate_fun"):
+    return False
+
+  if is_fun_opt_out(msg.author.id):
+    await msg.reply("😐 You're already opted out of acro/dict commands and acronym responses.")
+    return True
+
+  set_fun_opt_out(msg.author.id, True)
+  await msg.reply("😐 You are now opted out of acro/dict commands and acronym responses. Use `i_love_fun` to opt back in.")
+  return True
+
+
+async def handle_i_love_fun_command(msg):
+  if not msg.content.lower().startswith("i_love_fun"):
+    return False
+
+  if not is_fun_opt_out(msg.author.id):
+    await msg.reply("🎉 You're already opted into acro/dict commands and acronym responses.")
+    return True
+
+  set_fun_opt_out(msg.author.id, False)
+  await msg.reply("🎉 You are opted back into acro/dict commands and acronym responses.")
   return True
 
 
@@ -714,6 +751,8 @@ async def handle_exact_commands(msg, content_lower):
 async def handle_auto_dict(msg):
   if msg.guild is None:
     return
+  if is_fun_opt_out(msg.author.id):
+    return
   found = find_acronyms_in_message(str(msg.guild.id), msg.content)
   if not found:
     return
@@ -778,6 +817,8 @@ async def on_message(msg):
     "ban": handle_ban_command,
     "unban": handle_unban_command,
     "notif": handle_notif_command,
+    "i_hate_fun": handle_i_hate_fun_command,
+    "i_love_fun": handle_i_love_fun_command,
   }
 
   handler = prefix_handlers.get(command)
@@ -785,7 +826,7 @@ async def on_message(msg):
     return
 
   matched_acronym = get_matching_acronym(str(msg.guild.id), content_lower) if msg.guild else None
-  if matched_acronym:
+  if matched_acronym and not is_fun_opt_out(msg.author.id):
     await msg.reply("The Big " + matched_acronym)
 
   if await handle_exact_commands(msg, content_lower):

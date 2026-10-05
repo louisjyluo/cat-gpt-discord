@@ -180,6 +180,22 @@ def set_user_balance(guild_id_or_user_id, user_id=None, amount=None):
   return normalized
 
 
+def set_fun_opt_out(user_id, opted_out):
+  """Toggle whether a user is opted out of acro/dict commands and acronym auto-responses."""
+  uid = str(user_id)
+  balance_collection.update_one(
+    {'user_id': uid},
+    {'$set': {'user_id': uid, 'fun_opt_out': bool(opted_out)}},
+    upsert=True,
+  )
+
+
+def is_fun_opt_out(user_id):
+  """Check whether a user has opted out of acro/dict commands and acronym auto-responses."""
+  doc = balance_collection.find_one({'user_id': str(user_id)})
+  return bool(doc and doc.get('fun_opt_out'))
+
+
 def get_gamble_leaderboard(guild_id, limit=10):
   gid = str(guild_id)
   try:
