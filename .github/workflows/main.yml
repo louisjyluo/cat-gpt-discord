@@ -1,0 +1,26 @@
+name: Deploy to Raspberry Pi
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to Raspberry Pi
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PI_HOST }}
+          username: raspberrypi
+          key: ${{ secrets.PI_SSH_KEY }}
+          script: |
+            cd /home/raspberrypi/cat-gpt-discord
+
+            git pull origin main
+
+            /home/blouis/cat-gpt-discord/venv/bin/pip install -r requirements.txt
+
+            sudo systemctl restart cat-gpt
