@@ -21,6 +21,6 @@ jobs:
 
             git pull origin main
 
-            /home/blouis/cat-gpt-discord/venv/bin/pip install -r requirements.txt
+            /home/raspberrypi/cat-gpt-discord/venv/bin/pip3 install -r requirements.txt
 
             sudo systemctl restart cat-gpt
