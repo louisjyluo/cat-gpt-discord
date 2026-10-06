@@ -164,8 +164,15 @@ def ban_phrase(guild_id, phrase):
   if is_phrase_banned(guild_id, normalized):
     raise ValueError(f"The phrase **{normalized}** is already banned.")
 
-  banned_phrase_collection.insert_one({'guild_id': guild_id, 'phrase': normalized})
-  existing_removed = acronym_collection.delete_one({'guild_id': guild_id, 'phrase': normalized}).deleted_count > 0
+  existing_doc = acronym_collection.find_one({'guild_id': guild_id, 'phrase': normalized})
+  ban_doc = {'guild_id': guild_id, 'phrase': normalized}
+  if existing_doc and existing_doc.get('author_id') is not None:
+    ban_doc['author_id'] = existing_doc['author_id']
+
+  banned_phrase_collection.insert_one(ban_doc)
+  existing_removed = existing_doc is not None
+  if existing_removed:
+    acronym_collection.delete_one({'_id': existing_doc['_id']})
   return normalized, existing_removed
 
 
@@ -177,3 +184,32 @@ def unban_phrase(guild_id, phrase):
 
   result = banned_phrase_collection.delete_one({'guild_id': guild_id, 'phrase': normalized})
   return result.deleted_count > 0
+
+
+def list_banned_phrases(guild_id):
+  """Return all (phrase, author_id) tuples banned for this guild, sorted by phrase."""
+  guild_id = str(guild_id)
+  results = list(banned_phrase_collection.find(
+    {'guild_id': guild_id},
+    {'_id': 0, 'phrase': 1, 'author_id': 1}
+  ))
+  results.sort(key=lambda doc: doc.get('phrase', ''))
+  return [(doc['phrase'], doc.get('author_id')) for doc in results]
+
+
+def get_ban_leaderboard(guild_id):
+  """Return [(author_id, ban_count), ...] sorted by most banned phrases claimed by that author."""
+  guild_id = str(guild_id)
+  results = list(banned_phrase_collection.find(
+    {'guild_id': guild_id, 'author_id': {'$ne': None}},
+    {'_id': 0, 'author_id': 1}
+  ))
+
+  counts = {}
+  for doc in results:
+    author_id = doc.get('author_id')
+    if not author_id:
+      continue
+    counts[author_id] = counts.get(author_id, 0) + 1
+
+  return sorted(counts.items(), key=lambda item: item[1], reverse=True)

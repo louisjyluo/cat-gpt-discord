@@ -14,6 +14,7 @@ REGULAR_COMMANDS = [
   "`blame <ACRO>`: Show who owns an acronym.",
   "`unclaim <ACRO>`: Remove your claim on an acronym.",
   "`charades [number]`: Sends that many random acronym phrases (default 3, max 10).",
+  "`ban_list`: Shows banned phrases and a ban leaderboard.",
   "`i_hate_fun`: Opts you out of acro/dict commands and acronym auto-responses.",
   "`i_love_fun`: Opts you back into acro/dict commands and acronym auto-responses.",
   "`roll`: Rolls a random number from 1 to 1000.",

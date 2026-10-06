@@ -5,9 +5,10 @@ import random
 from discord.ext import commands
 from dotenv import load_dotenv
 from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database
-from acronym import acronym, unacronym, unacronym_by_acronym, unacronym_all_by_author, ban_phrase, unban_phrase, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
+from acronym import acronym, unacronym, unacronym_by_acronym, unacronym_all_by_author, ban_phrase, unban_phrase, list_banned_phrases, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
 from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, blame_acronym, claim_acronym, unclaim_acronym
 from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
+from banUI import BanListView, build_ban_list_embed
 from helpUI import HelpView, build_help_embed
 from llm import chat, summarize_text
 from db import (
@@ -90,6 +91,7 @@ protected_acro_phrases = {
     "charades",
     "ban",
     "unban",
+    "ban_list",
     "notif",
     "i_hate_fun",
     "i_love_fun"
@@ -191,16 +193,53 @@ async def handle_summary_command(msg, content_lower):
 
 
 async def handle_catgpt_chat_command(msg, content_lower):
-  if content_lower.startswith("catgpt") and not content_lower.startswith("catgpt summarize"):
-    await msg.reply(await chat(msg))
-    return True
-  return False
+  if not content_lower.startswith("catgpt") or content_lower.startswith("catgpt summarize"):
+    return False
+
+  result = await chat(msg)
+  action = result.get("action")
+
+  if action == "acro":
+    if msg.guild is None:
+      await msg.reply("This command only works in a server.")
+    elif is_fun_opt_out(msg.author.id):
+      await msg.reply("You've opted out of acro/dict. Use `i_hate_fun` to opt back in.")
+    else:
+      await perform_acro_phrase(msg, result.get("phrase", ""), reserved_acro_commands)
+  elif action == "gamble":
+    await send_gamble_panel(msg)
+  elif action == "race":
+    await send_race_panel(msg)
+  else:
+    await msg.reply(result.get("text") or "Mrow?")
+
+  return True
 
 
 async def handle_lex_command(msg):
   if msg.content.startswith("lex"):
     await msg.reply(alphabetize(msg.content[3:]))
   return False
+
+
+async def perform_acro_phrase(msg, phrase, protected_phrases):
+  """Creates/stores a single acro phrase and replies. Shared by `acro <phrase>` and CatGPT's agentic acro tool call."""
+  acro_input = phrase.lower().strip()
+  if acro_input in protected_phrases:
+    await msg.reply("You can't acro bot commands.")
+  elif acro_input:
+    try:
+      created_acronym = acronym(
+        str(msg.guild.id),
+        acro_input,
+        str(msg.author.id),
+        reserved_acronyms=reserved_acronyms
+      )
+      await msg.reply(f"Acronym added: {created_acronym}")
+    except ValueError as e:
+      await msg.reply(str(e))
+  else:
+    await msg.reply("Usage: acro <word or phrase>")
 
 
 async def handle_acro_command(msg, protected_phrases):
@@ -251,21 +290,8 @@ async def handle_acro_command(msg, protected_phrases):
 
     for chunk in chunks:
       await msg.reply(chunk)
-  elif acro_input in protected_phrases:
-    await msg.reply("You can't acro bot commands.")
-  elif acro_input:
-    try:
-      created_acronym = acronym(
-        str(msg.guild.id),
-        acro_input,
-        str(msg.author.id),
-        reserved_acronyms=reserved_acronyms
-      )
-      await msg.reply(f"Acronym added: {created_acronym}")
-    except ValueError as e:
-      await msg.reply(str(e))
   else:
-    await msg.reply("Usage: acro <word or phrase>")
+    await perform_acro_phrase(msg, acro_input, protected_phrases)
   return True
 
 
@@ -434,6 +460,21 @@ async def handle_unban_command(msg):
       await msg.reply("That phrase isn't banned.")
   except ValueError as e:
     await msg.reply(str(e))
+  return True
+
+
+async def handle_ban_list_command(msg, content_lower):
+  if content_lower != "ban_list":
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  entries = list_banned_phrases(str(msg.guild.id))
+  embed = build_ban_list_embed(msg.guild.id, 0, entries)
+  view = BanListView(msg.guild.id, page=0, entries=entries)
+  await msg.reply(embed=embed, view=view)
   return True
 
 
@@ -707,6 +748,14 @@ async def handle_unclaim_acro_command(msg):
   return True
 
 
+async def send_race_panel(msg):
+  """Shared by the `race` command and CatGPT's agentic race tool call."""
+  if msg.guild is None:
+    await msg.reply("The race panel only works in a server.")
+    return
+  await msg.reply(embed=build_race_embed(msg.guild.id), view=RacePanelView(msg.guild.id))
+
+
 async def handle_exact_commands(msg, content_lower):
   match content_lower:
     case "help":
@@ -725,10 +774,7 @@ async def handle_exact_commands(msg, content_lower):
         await msg.reply(embed=build_racers_embed(msg.guild.id, msg.author.id, msg.author.display_name), view=RacersPanelView())
       return True
     case "race":
-      if msg.guild is None:
-        await msg.reply("The race panel only works in a server.")
-      else:
-        await msg.reply(embed=build_race_embed(msg.guild.id), view=RacePanelView(msg.guild.id))
+      await send_race_panel(msg)
       return False
     case "race history":
       if msg.guild is None:
@@ -820,6 +866,7 @@ async def on_message(msg):
     "charades": handle_charades_command,
     "ban": handle_ban_command,
     "unban": handle_unban_command,
+    "ban_list": lambda current_msg: handle_ban_list_command(current_msg, content_lower),
     "notif": lambda current_msg: handle_notif_command(current_msg, content_lower),
     "i_hate_fun": handle_i_hate_fun_command,
     "i_love_fun": handle_i_love_fun_command,
