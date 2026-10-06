@@ -437,12 +437,16 @@ async def handle_unban_command(msg):
   return True
 
 
-async def handle_notif_command(msg):
-  if not msg.content.lower().startswith("notif"):
+async def handle_notif_command(msg, content_lower):
+  if content_lower != "notif":
     return False
 
   if msg.guild is None:
     await msg.reply("This command only works in a server.")
+    return True
+
+  if msg.author.id != BLOUIS_ID:
+    await msg.reply("Only Blouis can use notif.")
     return True
 
   current = get_init_notification(str(msg.guild.id), str(msg.channel.id))
@@ -816,7 +820,7 @@ async def on_message(msg):
     "charades": handle_charades_command,
     "ban": handle_ban_command,
     "unban": handle_unban_command,
-    "notif": handle_notif_command,
+    "notif": lambda current_msg: handle_notif_command(current_msg, content_lower),
     "i_hate_fun": handle_i_hate_fun_command,
     "i_love_fun": handle_i_love_fun_command,
   }
