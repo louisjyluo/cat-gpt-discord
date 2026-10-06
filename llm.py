@@ -27,11 +27,16 @@ CHAT_SYSTEM_PROMPT = (
   "Make the response sound like a cat replied and do not exceed 200 words under any circumstance. "
   "You are CatGPT, a Discord bot. If the user asks what you can do, how a command works, or for help, "
   "answer using the command reference below instead of guessing. Don't dump the whole list unless asked for it; "
-  "just mention the relevant command(s).\n\n"
+  "just mention the relevant command(s). Never tell the user to run `catgpt <message>` or similar to talk to you — "
+  "they're already talking to you right now, so that advice is pointless.\n\n"
   f"{COMMAND_REFERENCE}\n\n"
-  "You also have tools to directly perform three simple actions when the user clearly asks for them: "
-  "creating an acronym for a phrase they give you, opening the gamble panel, or opening the race panel. "
-  "Only call a tool when the user's message is clearly asking for one of those three things. "
+  "You also have tools to directly perform simple actions when the user clearly asks for them: "
+  "creating an acronym for a phrase, opening the gamble panel, opening the race panel, showing the help menu, "
+  "checking a balance, summarizing recent channel messages, listing all stored acronyms, or looking up who made/owns an acronym. "
+  "Only call a tool when the user's message is clearly asking for one of those things. "
+  "If the user's message clearly asks for a DIFFERENT command from the reference above (one with no matching tool, e.g. "
+  "lex, unacro, claim, unclaim, charades, stim, ban, unban, ban_list, racer/racers, race history, notif, i_hate_fun, i_love_fun), "
+  "call report_unsupported_command with that command's trigger text instead of guessing or chatting normally. "
   "Otherwise, just reply normally in character."
 )
 
@@ -69,8 +74,89 @@ CHAT_TOOLS = [
       "parameters": {"type": "object", "properties": {}},
     },
   },
+  {
+    "type": "function",
+    "function": {
+      "name": "show_help",
+      "description": "Show the bot's help menu. Call when the user asks for help or what commands exist.",
+      "parameters": {"type": "object", "properties": {}},
+    },
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "show_balance",
+      "description": "Show a user's money balance. Call when the user asks for their balance or someone else's, e.g. 'whats my balance', 'balance', 'how much money do I have'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Mention, user ID, username, or display name whose balance to check. Omit entirely to check the requester's own balance.",
+          }
+        },
+      },
+    },
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "summarize_recent_messages",
+      "description": "Summarize the most recent messages in the channel. Call when the user asks to summarize recent chat/conversation/sentences without replying to a specific message, e.g. 'summarize this', 'summarize the last couple sentences'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "description": "How many recent messages to summarize, between 10 and 50. Default to 10 if the user doesn't specify a number.",
+          }
+        },
+      },
+    },
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "show_acronym_dictionary",
+      "description": "Show the full list of stored acronyms for this server. Call when the user asks where/how to find all acros or if there's a list of acros.",
+      "parameters": {"type": "object", "properties": {}},
+    },
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "show_blame",
+      "description": "Look up who created/owns an acronym. Call when the user asks who made/added/owns an acro, e.g. 'who made this acro? {phrase}', 'who added this? {phrase}'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The acronym code (e.g. WTF) or the original phrase the user is asking about.",
+          }
+        },
+        "required": ["query"],
+      },
+    },
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "report_unsupported_command",
+      "description": "Call when the user clearly wants to use a bot command that has no tool support (anything not covered by the other tools).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The exact command trigger text the user should run themselves, e.g. 'claim <ACRO>' or 'charades'.",
+          }
+        },
+        "required": ["command"],
+      },
+    },
+  },
 ]
-
 
 async def chat(msg):
   global api_request_counter
@@ -109,6 +195,27 @@ async def chat(msg):
         return {"action": "gamble"}
       elif call.function.name == "open_race_panel":
         return {"action": "race"}
+      elif call.function.name == "show_help":
+        return {"action": "help"}
+      elif call.function.name == "show_balance":
+        username = str(args.get("username") or "").strip() or None
+        return {"action": "balance", "username": username}
+      elif call.function.name == "summarize_recent_messages":
+        try:
+          count = int(args.get("count") or 10)
+        except (TypeError, ValueError):
+          count = 10
+        return {"action": "summarize", "count": count}
+      elif call.function.name == "show_acronym_dictionary":
+        return {"action": "dict"}
+      elif call.function.name == "show_blame":
+        query = str(args.get("query", "")).strip()
+        if query:
+          return {"action": "blame", "query": query}
+      elif call.function.name == "report_unsupported_command":
+        command = str(args.get("command", "")).strip()
+        if command:
+          return {"action": "unsupported", "command": command}
 
     return {"action": "reply", "text": response_message.content}
 

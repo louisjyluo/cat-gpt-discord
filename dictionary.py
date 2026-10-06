@@ -61,6 +61,30 @@ def blame_acronym(guild_id, acronym_str):
   return [(doc['phrase'], doc.get('author_id')) for doc in results]
 
 
+def resolve_blame_target(guild_id, query):
+  """Resolve a user-given acronym code or phrase to its acronym code and (phrase, author_id) entries.
+  Tries an exact acronym code match first, then falls back to a phrase substring search."""
+  guild_id = str(guild_id)
+  normalized = query.strip()
+  if not normalized:
+    return None, []
+
+  upper_query = normalized.upper()
+  entries = blame_acronym(guild_id, upper_query)
+  if entries:
+    return upper_query, entries
+
+  lower_query = normalized.lower()
+  phrase_match = next(
+    (acro for acro, phrase, _ in list_all_acronyms(guild_id) if lower_query in phrase.lower()),
+    None
+  )
+  if phrase_match is None:
+    return None, []
+
+  return phrase_match, blame_acronym(guild_id, phrase_match)
+
+
 def claim_acronym(guild_id, acronym_str, user_id, phrase=None, display_name=None):
   """Claim authorship of an acronym if it is currently unclaimed."""
   guild_id = str(guild_id)

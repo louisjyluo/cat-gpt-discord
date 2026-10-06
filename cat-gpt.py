@@ -6,7 +6,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from gambling.gamble import send_gamble_panel, load_gamble_database, save_gamble_database
 from acronym import acronym, unacronym, unacronym_by_acronym, unacronym_all_by_author, ban_phrase, unban_phrase, list_banned_phrases, load_acronym_database, save_acronym_database, get_matching_acronym, normalize_reserved_acronym
-from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, blame_acronym, claim_acronym, unclaim_acronym
+from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_message, resolve_blame_target, claim_acronym, unclaim_acronym
 from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
 from banUI import BanListView, build_ban_list_embed
 from helpUI import HelpView, build_help_embed
@@ -135,6 +135,36 @@ def resolve_stim_target_id(msg, username_arg):
   return None
 
 
+async def summarize_recent_messages(msg, count):
+  """Summarizes the last `count` non-bot messages in the channel. Shared by `catsum <number>` and CatGPT's agentic summarize tool call."""
+  count = min(count, 50)
+  if count < 10:
+    await msg.reply("Mrow? Give me a number between 10 and 50!")
+    return
+
+  fetched = []
+  async for m in msg.channel.history(limit=count + 1):
+    if m.id == msg.id:
+      continue
+    if m.author == client.user:
+      continue
+    if m.content.strip():
+      fetched.append(m)
+    if len(fetched) >= count:
+      break
+
+  fetched.reverse()
+
+  if not fetched:
+    await msg.reply("Mew... no messages found to summarize!")
+    return
+
+  formatted = "\n".join(
+    f"{m.author.display_name}: {m.content.strip()}" for m in fetched
+  )
+  await msg.reply(await summarize_text(formatted))
+
+
 async def handle_summary_command(msg, content_lower):
   parts = content_lower.split()
   is_catsum_count = len(parts) == 2 and parts[0] == "catsum" and parts[1].isdigit()
@@ -143,32 +173,7 @@ async def handle_summary_command(msg, content_lower):
     return False
 
   if is_catsum_count:
-    count = min(int(parts[1]), 50)
-    if count < 10:
-      await msg.reply("Mrow? Give me a number between 10 and 50!")
-      return True
-
-    fetched = []
-    async for m in msg.channel.history(limit=count + 1):
-      if m.id == msg.id:
-        continue
-      if m.author == client.user:
-        continue
-      if m.content.strip():
-        fetched.append(m)
-      if len(fetched) >= count:
-        break
-
-    fetched.reverse()
-
-    if not fetched:
-      await msg.reply("Mew... no messages found to summarize!")
-      return True
-
-    formatted = "\n".join(
-      f"{m.author.display_name}: {m.content.strip()}" for m in fetched
-    )
-    await msg.reply(await summarize_text(formatted))
+    await summarize_recent_messages(msg, int(parts[1]))
     return True
 
   if msg.reference is None or msg.reference.message_id is None:
@@ -210,6 +215,27 @@ async def handle_catgpt_chat_command(msg, content_lower):
     await send_gamble_panel(msg)
   elif action == "race":
     await send_race_panel(msg)
+  elif action == "help":
+    await send_help_panel(msg)
+  elif action == "balance":
+    await show_balance(msg, result.get("username"))
+  elif action == "summarize":
+    await summarize_recent_messages(msg, result.get("count") or 10)
+  elif action == "dict":
+    if msg.guild is None:
+      await msg.reply("This command only works in a server.")
+    elif is_fun_opt_out(msg.author.id):
+      await msg.reply("You've opted out of acro/dict. Use `i_hate_fun` to opt back in.")
+    else:
+      await show_dict_list(msg)
+  elif action == "blame":
+    if msg.guild is None:
+      await msg.reply("This command only works in a server.")
+    else:
+      await show_blame(msg, result.get("query", ""))
+  elif action == "unsupported":
+    command = result.get("command", "").strip()
+    await msg.reply(f"Sorry, I can't tool call this command, run `{command}` to use it.")
   else:
     await msg.reply(result.get("text") or "Mrow?")
 
@@ -295,6 +321,17 @@ async def handle_acro_command(msg, protected_phrases):
   return True
 
 
+async def show_dict_list(msg):
+  """Shared by `dict .` and CatGPT's agentic dict tool call."""
+  try:
+    entries = list_all_acronyms(str(msg.guild.id))
+    embed = build_dict_embed(msg.guild.id, 0, entries)
+    view = DictView(msg.guild.id, page=0, entries=entries)
+    await msg.reply(embed=embed, view=view)
+  except ValueError as e:
+    await msg.reply(str(e))
+
+
 async def handle_dict_command(msg):
   if not msg.content.startswith("dict"):
     return False
@@ -310,13 +347,7 @@ async def handle_dict_command(msg):
   acro_input = msg.content[4:].strip()
 
   if acro_input == ".":
-    try:
-      entries = list_all_acronyms(str(msg.guild.id))
-      embed = build_dict_embed(msg.guild.id, 0, entries)
-      view = DictView(msg.guild.id, page=0, entries=entries)
-      await msg.reply(embed=embed, view=view)
-    except ValueError as e:
-      await msg.reply(str(e))
+    await show_dict_list(msg)
     return True
 
   await msg.reply("Usage: dict . (list all)")
@@ -527,20 +558,26 @@ async def handle_i_love_fun_command(msg):
   return True
 
 
+async def show_balance(msg, username_arg=None):
+  """Shared by the `bank` command and CatGPT's agentic balance tool call."""
+  if username_arg:
+    target_user_id = resolve_stim_target_id(msg, username_arg)
+    if target_user_id is None:
+      await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
+      return
+  else:
+    target_user_id = msg.author.id
+
+  balance = get_user_balance(target_user_id)
+  await msg.reply(f"<@{target_user_id}> has ${balance}.")
+
+
 async def handle_bank_command(msg):
   if not msg.content.startswith("bank"):
     return False
   parts = msg.content.split(maxsplit=1)
-  if len(parts) == 1:
-    target_user_id = msg.author.id
-  else:
-    target_user_id = resolve_stim_target_id(msg, parts[1])
-    if target_user_id is None:
-      await msg.reply("Could not find that user. Use a mention, user ID, username, or display name.")
-      return True
-
-  balance = get_user_balance(target_user_id)
-  await msg.reply(f"<@{target_user_id}> has ${balance}.")
+  username_arg = parts[1] if len(parts) > 1 else None
+  await show_balance(msg, username_arg)
   return False
 
 
@@ -630,24 +667,12 @@ async def handle_claim_acro_command(msg):
   return True
 
 
-async def handle_blame_acro_command(msg):
-  if not msg.content.lower().startswith("blame"):
-    return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
-  parts = msg.content.split()
-  if len(parts) != 2:
-    await msg.reply("Usage: `blame <ACRO>`")
-    return True
-
-  acro_arg = parts[1]
-  entries = blame_acronym(str(msg.guild.id), acro_arg)
+async def show_blame(msg, query):
+  """Shared by `blame <ACRO>` and CatGPT's agentic blame tool call. Accepts either an acronym code or a phrase."""
+  resolved_acro, entries = resolve_blame_target(str(msg.guild.id), query)
   if not entries:
-    await msg.reply(f"No acronym **{acro_arg.upper()}** found for this server.")
-    return True
+    await msg.reply(f"No acronym found for **{query}**.")
+    return
 
   lines = []
   for phrase, author_id in entries:
@@ -662,8 +687,24 @@ async def handle_blame_acro_command(msg):
       owner = member.display_name if member else "Unknown user"
       if member:
         upsert_contributor(str(msg.guild.id), author_id, member.display_name)
-    lines.append(f"**{acro_arg.upper()}** → {phrase} — {owner}")
+    lines.append(f"**{resolved_acro}** → {phrase} — {owner}")
   await msg.reply("\n".join(lines))
+
+
+async def handle_blame_acro_command(msg):
+  if not msg.content.lower().startswith("blame"):
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  parts = msg.content.split()
+  if len(parts) != 2:
+    await msg.reply("Usage: `blame <ACRO>`")
+    return True
+
+  await show_blame(msg, parts[1])
   return True
 
 
@@ -756,10 +797,15 @@ async def send_race_panel(msg):
   await msg.reply(embed=build_race_embed(msg.guild.id), view=RacePanelView(msg.guild.id))
 
 
+async def send_help_panel(msg):
+  """Shared by the `help` command and CatGPT's agentic help tool call."""
+  await msg.reply(embed=build_help_embed(0), view=HelpView())
+
+
 async def handle_exact_commands(msg, content_lower):
   match content_lower:
     case "help":
-      await msg.reply(embed=build_help_embed(0), view=HelpView())
+      await send_help_panel(msg)
       return False
     case "roll":
       await msg.reply(game())
