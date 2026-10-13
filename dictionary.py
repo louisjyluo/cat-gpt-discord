@@ -61,9 +61,10 @@ def blame_acronym(guild_id, acronym_str):
   return [(doc['phrase'], doc.get('author_id')) for doc in results]
 
 
-def resolve_blame_target(guild_id, query):
+def resolve_blame_target(guild_id, query, allow_phrase_fallback=True):
   """Resolve a user-given acronym code or phrase to its acronym code and (phrase, author_id) entries.
-  Tries an exact acronym code match first, then falls back to a phrase substring search."""
+  Tries an exact acronym code match first, then falls back to a phrase substring search
+  unless allow_phrase_fallback is False."""
   guild_id = str(guild_id)
   normalized = query.strip()
   if not normalized:
@@ -73,6 +74,9 @@ def resolve_blame_target(guild_id, query):
   entries = blame_acronym(guild_id, upper_query)
   if entries:
     return upper_query, entries
+
+  if not allow_phrase_fallback:
+    return None, []
 
   lower_query = normalized.lower()
   phrase_match = next(

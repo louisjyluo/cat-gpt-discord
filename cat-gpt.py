@@ -667,9 +667,10 @@ async def handle_claim_acro_command(msg):
   return True
 
 
-async def show_blame(msg, query):
-  """Shared by `blame <ACRO>` and CatGPT's agentic blame tool call. Accepts either an acronym code or a phrase."""
-  resolved_acro, entries = resolve_blame_target(str(msg.guild.id), query)
+async def show_blame(msg, query, strict=False):
+  """Shared by `blame <ACRO>` and CatGPT's agentic blame tool call. Accepts either an acronym code or a phrase,
+  unless strict is True, in which case only an exact acronym code match is allowed."""
+  resolved_acro, entries = resolve_blame_target(str(msg.guild.id), query, allow_phrase_fallback=not strict)
   if not entries:
     await msg.reply(f"No acronym found for **{query}**.")
     return
@@ -704,7 +705,7 @@ async def handle_blame_acro_command(msg):
     await msg.reply("Usage: `blame <ACRO>`")
     return True
 
-  await show_blame(msg, parts[1])
+  await show_blame(msg, parts[1], strict=True)
   return True
 
 
