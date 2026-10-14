@@ -208,7 +208,7 @@ async def handle_catgpt_chat_command(msg, content_lower):
     if msg.guild is None:
       await msg.reply("This command only works in a server.")
     elif is_fun_opt_out(msg.author.id):
-      await msg.reply("You've opted out of acro/dict. Use `i_hate_fun` to opt back in.")
+      await msg.reply("You've opted out of acro/dict. Use `i_love_fun` to opt back in.")
     else:
       await perform_acro_phrase(msg, result.get("phrase", ""), reserved_acro_commands)
   elif action == "gamble":
@@ -225,7 +225,7 @@ async def handle_catgpt_chat_command(msg, content_lower):
     if msg.guild is None:
       await msg.reply("This command only works in a server.")
     elif is_fun_opt_out(msg.author.id):
-      await msg.reply("You've opted out of acro/dict. Use `i_hate_fun` to opt back in.")
+      await msg.reply("You've opted out of acro/dict. Use `i_love_fun` to opt back in.")
     else:
       await show_dict_list(msg)
   elif action == "blame":
@@ -277,7 +277,7 @@ async def handle_acro_command(msg, protected_phrases):
     return True
 
   if is_fun_opt_out(msg.author.id):
-    await msg.reply("You've opted out of acro/dict. Use `i_hate_fun` to opt back in.")
+    await msg.reply("You've opted out of acro/dict. Use `i_love_fun` to opt back in.")
     return True
 
   acro_input = msg.content[4:].lower().strip()
@@ -341,7 +341,7 @@ async def handle_dict_command(msg):
     return True
 
   if is_fun_opt_out(msg.author.id):
-    await msg.reply("You've opted out of acro/dict. Use `i_hate_fun` to opt back in.")
+    await msg.reply("You've opted out of acro/dict. Use `i_love_fun` to opt back in.")
     return True
 
   acro_input = msg.content[4:].strip()
