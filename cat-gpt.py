@@ -198,7 +198,7 @@ async def handle_summary_command(msg, content_lower):
 
 
 async def handle_catgpt_chat_command(msg, content_lower):
-  if not content_lower.startswith("catgpt") or content_lower.startswith("catgpt summarize"):
+  if not content_lower.startswith("catgpt ") or content_lower.startswith("catgpt summarize"):
     return False
 
   result = await chat(msg)
