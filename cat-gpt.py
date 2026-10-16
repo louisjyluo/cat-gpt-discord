@@ -856,7 +856,7 @@ async def handle_auto_dict(msg):
   acro = random.choice(list(found.keys()))
   phrases = found[acro]
   joined = ", or ".join(f"**{p}**" for p in phrases)
-  replys = [f"errm, **{acro}** stands for {joined}, it's slang btw <:errrrrrmm:1507526975458377728>",
+  replys = [f"errm, **{acro}** stands for {joined}, it's slang btw <:errrrrrmm:1560710812417523753>",
             f"for those who just joined the chat, **{acro}** is short for {joined}",
             f"btw chat **{acro}** is slang for {joined}"]
   await msg.reply(replys[random.randint(0, len(replys) - 1)])
