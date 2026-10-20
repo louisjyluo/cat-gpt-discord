@@ -9,8 +9,8 @@ from helpUI import REGULAR_COMMANDS, ADMIN_COMMANDS
 load_dotenv()
 
 catClient = OpenAI(
-  api_key=os.getenv('LITELLM_API_KEY'),
-  base_url=os.getenv('LITELLM_BASE_URL'),
+  api_key=os.getenv('LITELLM_API_KEY', 'placeholder'),
+  base_url=os.getenv('LITELLM_BASE_URL', 'placeholder'),
 )
 api_request_counter = 0
 
