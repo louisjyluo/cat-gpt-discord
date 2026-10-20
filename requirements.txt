@@ -1,5 +1,6 @@
 discord.py
 openai
+litellm
 flask
 flask-cors
 httpx

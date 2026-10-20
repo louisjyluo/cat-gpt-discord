@@ -8,7 +8,10 @@ from helpUI import REGULAR_COMMANDS, ADMIN_COMMANDS
 
 load_dotenv()
 
-catClient = OpenAI(api_key=os.getenv('CATGPT'))
+catClient = OpenAI(
+  api_key=os.getenv('LITELLM_API_KEY'),
+  base_url=os.getenv('LITELLM_BASE_URL'),
+)
 api_request_counter = 0
 
 def _build_command_reference():
@@ -167,7 +170,7 @@ async def chat(msg):
     user_message = msg.content
 
     response = catClient.chat.completions.create(
-      model="gpt-5.4-mini",
+      model="openai/gpt-6-luna",
       messages=[
         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
         {"role": "user", "content": user_message}
@@ -240,7 +243,7 @@ async def summarize_text(text):
     )
 
     response = catClient.chat.completions.create(
-      model="gpt-5.4-mini",
+      model="openai/gpt-6-luna",
       messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": text}
