@@ -170,7 +170,7 @@ async def chat(msg):
     user_message = msg.content
 
     response = catClient.chat.completions.create(
-      model="openai/gpt-6-luna",
+      model="openai/gpt-luna-latest",
       messages=[
         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
         {"role": "user", "content": user_message}
@@ -243,7 +243,7 @@ async def summarize_text(text):
     )
 
     response = catClient.chat.completions.create(
-      model="openai/gpt-6-luna",
+      model="openai/gpt-luna-latest",
       messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": text}
