@@ -170,14 +170,13 @@ async def chat(msg):
     user_message = msg.content
 
     response = catClient.chat.completions.create(
-      model="openai/gpt-astra-latest",
+      model="openai/gpt-luna-latest",
       messages=[
         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
         {"role": "user", "content": user_message}
       ],
       tools=CHAT_TOOLS,
       tool_choice="auto",
-      reasoning_effort="high",
     )
 
     response_message = response.choices[0].message
@@ -244,12 +243,11 @@ async def summarize_text(text):
     )
 
     response = catClient.chat.completions.create(
-      model="openai/gpt-astra-latest",
+      model="openai/gpt-luna-latest",
       messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": text}
-      ],
-      reasoning_effort="high",
+      ]
     )
 
     assistant_message = response.choices[0].message.content
