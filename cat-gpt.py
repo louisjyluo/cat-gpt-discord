@@ -10,7 +10,7 @@ from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_messa
 from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
 from banUI import BanListView, build_ban_list_embed
 from helpUI import HelpView, build_help_embed
-from llm import chat, summarize_text
+from llm import chat, summarize_text, favourite_acro_reply
 from db import (
   init_db, close_db, get_user_balance, set_user_balance,
   set_init_notification, get_init_notification,
@@ -233,6 +233,15 @@ async def handle_catgpt_chat_command(msg, content_lower):
       await msg.reply("This command only works in a server.")
     else:
       await show_blame(msg, result.get("query", ""))
+  elif action == "favourite_acro":
+    if msg.guild is None:
+      await msg.reply("This command only works in a server.")
+    else:
+      phrases = get_charades_phrases(msg.guild.id, 1)
+      if not phrases:
+        await msg.reply("No acronym phrases found for this server.")
+      else:
+        await msg.reply(await favourite_acro_reply(phrases[0]))
   elif action == "unsupported":
     command = result.get("command", "").strip()
     await msg.reply(f"Sorry, I can't tool call this command, run `{command}` to use it.")
@@ -709,6 +718,13 @@ async def handle_blame_acro_command(msg):
   return True
 
 
+def get_charades_phrases(guild_id, count):
+  """Random acro phrases for a guild; shared by `charades <n>` and CatGPT's favourite-acro tool call."""
+  entries = list_all_acronyms(str(guild_id))
+  phrases = [phrase for _, phrase, _ in entries if phrase.strip()]
+  return random.sample(phrases, min(count, len(phrases)))
+
+
 async def handle_charades_command(msg):
   if not msg.content.lower().startswith("charades"):
     return False
@@ -731,13 +747,11 @@ async def handle_charades_command(msg):
 
   count = min(count, 10)
 
-  entries = list_all_acronyms(str(msg.guild.id))
-  phrases = [phrase for _, phrase, _ in entries if phrase.strip()]
-  if not phrases:
+  selected = get_charades_phrases(msg.guild.id, count)
+  if not selected:
     await msg.reply("No acronym phrases found for this server.")
     return True
 
-  selected = random.sample(phrases, min(count, len(phrases)))
   await msg.reply("\n".join(selected))
   return True
 

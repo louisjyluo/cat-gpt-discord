@@ -33,13 +33,23 @@ CHAT_SYSTEM_PROMPT = (
   "just mention the relevant command(s). Never tell the user to run `catgpt <message>` or similar to talk to you — "
   "they're already talking to you right now, so that advice is pointless.\n\n"
   f"{COMMAND_REFERENCE}\n\n"
-  "You also have tools to directly perform simple actions when the user clearly asks for them: "
-  "creating an acronym for a phrase, opening the gamble panel, opening the race panel, showing the help menu, "
-  "checking a balance, summarizing recent channel messages, listing all stored acronyms, or looking up who made/owns an acronym. "
-  "Only call a tool when the user's message is clearly asking for one of those things. "
-  "If the user's message clearly asks for a DIFFERENT command from the reference above (one with no matching tool, e.g. "
-  "lex, unacro, claim, unclaim, charades, stim, ban, unban, ban_list, racer/racers, race history, notif, i_hate_fun, i_love_fun), "
+  "TOOL-CALLABLE commands (you can run these for the user when they clearly ask):\n"
+  "- `acro <phrase>` (create_acronym)\n"
+  "- `gamble` (open_gamble_panel)\n"
+  "- `race` (open_race_panel)\n"
+  "- `help` (show_help)\n"
+  "- `bank [username]` (show_balance)\n"
+  "- `catsum <number>` (summarize_recent_messages)\n"
+  "- `dict .` (show_acronym_dictionary)\n"
+  "- `blame <ACRO>` (show_blame)\n"
+  "- `charades 1`, only when asked for your favourite acro (favourite_acronym)\n\n"
+  "NOT tool-callable (the user must run these themselves): lex, unacro, claim, unclaim, charades (any general use), "
+  "ban_list, i_hate_fun, i_love_fun, roll, racer/racers, race history, say hi, cat, blouis, redward, "
+  "and all owner-only commands (acro *, unacroall, ban, unban, stim, notif). "
+  "Only call a tool when the user's message is clearly asking for one of the tool-callable commands. "
+  "If the user clearly asks you to do one of the NOT tool-callable commands, "
   "call report_unsupported_command with that command's trigger text instead of guessing or chatting normally. "
+  "If the user asks what you can do or which commands you can run for them, answer from the two lists above. "
   "Otherwise, just reply normally in character."
 )
 
@@ -145,6 +155,14 @@ CHAT_TOOLS = [
   {
     "type": "function",
     "function": {
+      "name": "favourite_acronym",
+      "description": "Pick a random acro phrase as the bot's favourite. Call when the user asks what your favourite acro/acronym is, e.g. 'what's your favourite acro?'.",
+      "parameters": {"type": "object", "properties": {}},
+    },
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "report_unsupported_command",
       "description": "Call when the user clearly wants to use a bot command that has no tool support (anything not covered by the other tools).",
       "parameters": {
@@ -215,6 +233,8 @@ async def chat(msg):
         query = str(args.get("query", "")).strip()
         if query:
           return {"action": "blame", "query": query}
+      elif call.function.name == "favourite_acronym":
+        return {"action": "favourite_acro"}
       elif call.function.name == "report_unsupported_command":
         command = str(args.get("command", "")).strip()
         if command:
@@ -225,6 +245,31 @@ async def chat(msg):
   except Exception as e:
     print(f"Error: {e}")
     return {"action": "reply", "text": "Merrorr: Something went mwrong mmmmmm"}
+
+
+async def favourite_acro_reply(phrase):
+  global api_request_counter
+  api_request_counter += 1
+  print(f"API Request Count: {api_request_counter}")
+
+  try:
+    response = catClient.chat.completions.create(
+      model="openai/gpt-luna-latest",
+      messages=[
+        {"role": "system", "content": (
+          "You are CatGPT, a Discord bot with a cat personality. Someone asked what your favourite acro is. "
+          "Your favourite is the phrase provided by the user. State it exactly as given, then add a short, "
+          "playful in-character reason why you love it. Do not exceed 60 words."
+        )},
+        {"role": "user", "content": phrase}
+      ]
+    )
+    await asyncio.sleep(1)
+    return response.choices[0].message.content
+
+  except Exception as e:
+    print(f"Error: {e}")
+    return f"My favourite acro is **{phrase}**, mrow!"
 
 
 async def summarize_text(text):
