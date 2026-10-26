@@ -1,5 +1,6 @@
 import os
 import re
+import base64
 import discord
 import random
 from discord.ext import commands
@@ -211,12 +212,30 @@ def get_image_urls(message):
   return urls
 
 
+MAX_PDF_BYTES = 20 * 1024 * 1024
+MAX_PDFS = 3
+
+
+async def get_pdfs(message):
+  """Returns [(filename, base64 data URL)] for PDF attachments, skipping oversized ones."""
+  pdfs = []
+  for a in message.attachments:
+    content_type = (a.content_type or "").split(";")[0].lower()
+    if content_type == "application/pdf" or a.filename.lower().endswith(".pdf"):
+      if a.size > MAX_PDF_BYTES or len(pdfs) >= MAX_PDFS:
+        continue
+      data = base64.b64encode(await a.read()).decode()
+      pdfs.append((a.filename, f"data:application/pdf;base64,{data}"))
+  return pdfs
+
+
 async def handle_catgpt_chat_command(msg, content_lower):
   if not content_lower.startswith("catgpt ") or content_lower.startswith("catgpt summarize"):
     return False
 
   replied_to = None
   image_urls = get_image_urls(msg)
+  pdfs = await get_pdfs(msg)
   if msg.reference is not None and msg.reference.message_id is not None:
     referenced_message = msg.reference.resolved
     if not isinstance(referenced_message, discord.Message):
@@ -227,12 +246,16 @@ async def handle_catgpt_chat_command(msg, content_lower):
     if referenced_message is not None:
       referenced_images = get_image_urls(referenced_message)
       image_urls += referenced_images
+      referenced_pdfs = await get_pdfs(referenced_message)
+      pdfs += referenced_pdfs[:max(0, MAX_PDFS - len(pdfs))]
       if referenced_message.content.strip():
         replied_to = f"{referenced_message.author.display_name}: {referenced_message.content.strip()}"
       elif referenced_images:
         replied_to = f"{referenced_message.author.display_name} sent an image."
+      elif referenced_pdfs:
+        replied_to = f"{referenced_message.author.display_name} sent a PDF."
 
-  result = await chat(msg, replied_to, image_urls)
+  result = await chat(msg, replied_to, image_urls, pdfs)
   action = result.get("action")
 
   if action == "acro":

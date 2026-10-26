@@ -197,7 +197,7 @@ CHAT_TOOLS = [
   },
 ]
 
-async def chat(msg, replied_to=None, image_urls=None):
+async def chat(msg, replied_to=None, image_urls=None, pdfs=None):
   global api_request_counter
   api_request_counter += 1
   print(f"API Request Count: {api_request_counter}")
@@ -208,9 +208,11 @@ async def chat(msg, replied_to=None, image_urls=None):
       user_message = f"The user is replying to this message:\n\"\"\"\n{replied_to}\n\"\"\"\n\nTheir message: {msg.content}"
 
     user_content = user_message
-    if image_urls:
+    if image_urls or pdfs:
       user_content = [{"type": "text", "text": user_message}] + [
-        {"type": "image_url", "image_url": {"url": url}} for url in image_urls
+        {"type": "image_url", "image_url": {"url": url}} for url in image_urls or []
+      ] + [
+        {"type": "file", "file": {"filename": name, "file_data": data_url}} for name, data_url in pdfs or []
       ]
 
     response = catClient.chat.completions.create(
@@ -264,7 +266,7 @@ async def chat(msg, replied_to=None, image_urls=None):
       elif call.function.name == "web_search":
         query = str(args.get("query", "")).strip()
         if query:
-          return {"action": "reply", "text": await web_search_reply(user_message, query, image_urls)}
+          return {"action": "reply", "text": await web_search_reply(user_message, query, image_urls, pdfs)}
       elif call.function.name == "report_unsupported_command":
         command = str(args.get("command", "")).strip()
         if command:
@@ -277,7 +279,7 @@ async def chat(msg, replied_to=None, image_urls=None):
     return {"action": "reply", "text": "Merrorr: Something went mwrong mmmmmm"}
 
 
-async def web_search_reply(user_message, query, image_urls=None):
+async def web_search_reply(user_message, query, image_urls=None, pdfs=None):
   global api_request_counter
   api_request_counter += 1
   print(f"API Request Count: {api_request_counter}")
@@ -285,9 +287,11 @@ async def web_search_reply(user_message, query, image_urls=None):
   try:
     text = f"{user_message}\n\n(Suggested search: {query})"
     search_input = text
-    if image_urls:
+    if image_urls or pdfs:
       search_input = [{"role": "user", "content": [{"type": "input_text", "text": text}] + [
-        {"type": "input_image", "image_url": url} for url in image_urls
+        {"type": "input_image", "image_url": url} for url in image_urls or []
+      ] + [
+        {"type": "input_file", "filename": name, "file_data": data_url} for name, data_url in pdfs or []
       ]}]
 
     response = catClient.responses.create(
