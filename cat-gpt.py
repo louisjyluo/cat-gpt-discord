@@ -93,6 +93,7 @@ protected_acro_phrases = {
     "unban",
     "ban_list",
     "notif",
+    "skribbl",
     "i_hate_fun",
     "i_love_fun"
 }
@@ -277,6 +278,24 @@ async def perform_acro_phrase(msg, phrase, protected_phrases):
     await msg.reply("Usage: acro <word or phrase>")
 
 
+def chunk_phrases(phrases):
+  """Joins phrases with ", " into messages that fit Discord's 2000 character limit."""
+  chunks = []
+  current_chunk = []
+  current_length = 0
+  for phrase in phrases:
+    separator_length = 2 if current_chunk else 0
+    if current_chunk and current_length + separator_length + len(phrase) > 2000:
+      chunks.append(", ".join(current_chunk))
+      current_chunk = []
+      current_length = 0
+    current_chunk.append(phrase)
+    current_length += (2 if len(current_chunk) > 1 else 0) + len(phrase)
+  if current_chunk:
+    chunks.append(", ".join(current_chunk))
+  return chunks
+
+
 async def handle_acro_command(msg, protected_phrases):
   if not msg.content.startswith("acro"):
     return False
@@ -309,21 +328,7 @@ async def handle_acro_command(msg, protected_phrases):
       await msg.reply("No acronym phrases found for this server.")
       return True
 
-    chunks = []
-    current_chunk = []
-    current_length = 0
-    for phrase in phrases:
-      separator_length = 2 if current_chunk else 0
-      if current_chunk and current_length + separator_length + len(phrase) > 2000:
-        chunks.append(", ".join(current_chunk))
-        current_chunk = []
-        current_length = 0
-      current_chunk.append(phrase)
-      current_length += (2 if len(current_chunk) > 1 else 0) + len(phrase)
-    if current_chunk:
-      chunks.append(", ".join(current_chunk))
-
-    for chunk in chunks:
+    for chunk in chunk_phrases(phrases):
       await msg.reply(chunk)
   else:
     await perform_acro_phrase(msg, acro_input, protected_phrases)
@@ -538,6 +543,28 @@ async def handle_notif_command(msg, content_lower):
     await msg.reply("🔔 This channel will get a ping when I come online.")
   else:
     await msg.reply("🔕 This channel will no longer get startup pings.")
+  return True
+
+
+async def handle_skribbl_command(msg, content_lower):
+  if content_lower != "skribbl":
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  if msg.author.id != BLOUIS_ID:
+    await msg.reply("Only Blouis can use skribbl.")
+    return True
+
+  phrases = get_charades_phrases(msg.guild.id, 100)
+  if not phrases:
+    await msg.reply("No acronym phrases found for this server.")
+    return True
+
+  for chunk in chunk_phrases(phrases):
+    await msg.reply(chunk)
   return True
 
 
@@ -929,6 +956,7 @@ async def on_message(msg):
     "unban": handle_unban_command,
     "ban_list": lambda current_msg: handle_ban_list_command(current_msg, content_lower),
     "notif": lambda current_msg: handle_notif_command(current_msg, content_lower),
+    "skribbl": lambda current_msg: handle_skribbl_command(current_msg, content_lower),
     "i_hate_fun": handle_i_hate_fun_command,
     "i_love_fun": handle_i_love_fun_command,
   }

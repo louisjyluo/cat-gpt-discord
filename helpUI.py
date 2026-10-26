@@ -40,6 +40,7 @@ ADMIN_COMMANDS = [
   "`unban <phrase>`: Unbans a phrase.",
   "`stim <username> <$amount>`: Adds money to a user's balance.",
   "`notif`: Toggles whether this channel gets a ping when I come online.",
+  "`skribbl`: Sends 100 random acro phrases, comma-separated.",
 ]
 
 

@@ -45,7 +45,7 @@ CHAT_SYSTEM_PROMPT = (
   "- `charades 1`, only when asked for your favourite acro (favourite_acronym)\n\n"
   "NOT tool-callable (the user must run these themselves): lex, unacro, claim, unclaim, charades (any general use), "
   "ban_list, i_hate_fun, i_love_fun, roll, racer/racers, race history, say hi, cat, blouis, redward, "
-  "and all owner-only commands (acro *, unacroall, ban, unban, stim, notif). "
+  "and all owner-only commands (acro *, unacroall, ban, unban, stim, notif, skribbl). "
   "Only call a tool when the user's message is clearly asking for one of the tool-callable commands. "
   "If the user clearly asks you to do one of the NOT tool-callable commands, "
   "call report_unsupported_command with that command's trigger text instead of guessing or chatting normally. "
