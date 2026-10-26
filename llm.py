@@ -42,7 +42,8 @@ CHAT_SYSTEM_PROMPT = (
   "- `catsum <number>` (summarize_recent_messages)\n"
   "- `dict .` (show_acronym_dictionary)\n"
   "- `blame <ACRO>` (show_blame)\n"
-  "- `charades 1`, only when asked for your favourite acro (favourite_acronym)\n\n"
+  "- `charades 1`, only when asked for your favourite acro (favourite_acronym)\n"
+  "- web search (web_search), when the user asks about current events, recent info, or facts you are unsure of\n\n"
   "NOT tool-callable (the user must run these themselves): lex, unacro, claim, unclaim, charades (any general use), "
   "ban_list, i_hate_fun, i_love_fun, roll, racer/racers, race history, say hi, cat, blouis, redward, "
   "and all owner-only commands (acro *, unacroall, ban, unban, stim, notif, skribbl). "
@@ -163,6 +164,23 @@ CHAT_TOOLS = [
   {
     "type": "function",
     "function": {
+      "name": "web_search",
+      "description": "Search the web. Call when the user asks to search/google/look something up, or asks about current events, news, or recent facts you can't answer reliably from memory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query.",
+          }
+        },
+        "required": ["query"],
+      },
+    },
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "report_unsupported_command",
       "description": "Call when the user clearly wants to use a bot command that has no tool support (anything not covered by the other tools).",
       "parameters": {
@@ -179,19 +197,27 @@ CHAT_TOOLS = [
   },
 ]
 
-async def chat(msg):
+async def chat(msg, replied_to=None, image_urls=None):
   global api_request_counter
   api_request_counter += 1
   print(f"API Request Count: {api_request_counter}")
 
   try:
     user_message = msg.content
+    if replied_to:
+      user_message = f"The user is replying to this message:\n\"\"\"\n{replied_to}\n\"\"\"\n\nTheir message: {msg.content}"
+
+    user_content = user_message
+    if image_urls:
+      user_content = [{"type": "text", "text": user_message}] + [
+        {"type": "image_url", "image_url": {"url": url}} for url in image_urls
+      ]
 
     response = catClient.chat.completions.create(
       model="openai/gpt-luna-latest",
       messages=[
         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
-        {"role": "user", "content": user_message}
+        {"role": "user", "content": user_content}
       ],
       tools=CHAT_TOOLS,
       tool_choice="auto",
@@ -235,6 +261,10 @@ async def chat(msg):
           return {"action": "blame", "query": query}
       elif call.function.name == "favourite_acronym":
         return {"action": "favourite_acro"}
+      elif call.function.name == "web_search":
+        query = str(args.get("query", "")).strip()
+        if query:
+          return {"action": "reply", "text": await web_search_reply(user_message, query, image_urls)}
       elif call.function.name == "report_unsupported_command":
         command = str(args.get("command", "")).strip()
         if command:
@@ -245,6 +275,36 @@ async def chat(msg):
   except Exception as e:
     print(f"Error: {e}")
     return {"action": "reply", "text": "Merrorr: Something went mwrong mmmmmm"}
+
+
+async def web_search_reply(user_message, query, image_urls=None):
+  global api_request_counter
+  api_request_counter += 1
+  print(f"API Request Count: {api_request_counter}")
+
+  try:
+    text = f"{user_message}\n\n(Suggested search: {query})"
+    search_input = text
+    if image_urls:
+      search_input = [{"role": "user", "content": [{"type": "input_text", "text": text}] + [
+        {"type": "input_image", "image_url": url} for url in image_urls
+      ]}]
+
+    response = catClient.responses.create(
+      model="openai/gpt-luna-latest",
+      tools=[{"type": "web_search"}],
+      instructions=(
+        "You are CatGPT, a Discord bot. Use web search to answer the user's question. "
+        "Make the response sound like a cat replied and do not exceed 150 words under any circumstance."
+      ),
+      input=search_input,
+    )
+    await asyncio.sleep(1)
+    return response.output_text
+
+  except Exception as e:
+    print(f"Error: {e}")
+    return "Merrorr: I couldn't search the web right meow."
 
 
 async def favourite_acro_reply(phrase):

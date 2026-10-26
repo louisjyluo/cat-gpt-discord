@@ -198,11 +198,41 @@ async def handle_summary_command(msg, content_lower):
   return True
 
 
+IMAGE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/gif"}
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif")
+
+
+def get_image_urls(message):
+  urls = []
+  for a in message.attachments:
+    content_type = (a.content_type or "").split(";")[0].lower()
+    if content_type in IMAGE_CONTENT_TYPES or a.filename.lower().endswith(IMAGE_EXTENSIONS):
+      urls.append(a.url)
+  return urls
+
+
 async def handle_catgpt_chat_command(msg, content_lower):
   if not content_lower.startswith("catgpt ") or content_lower.startswith("catgpt summarize"):
     return False
 
-  result = await chat(msg)
+  replied_to = None
+  image_urls = get_image_urls(msg)
+  if msg.reference is not None and msg.reference.message_id is not None:
+    referenced_message = msg.reference.resolved
+    if not isinstance(referenced_message, discord.Message):
+      try:
+        referenced_message = await msg.channel.fetch_message(msg.reference.message_id)
+      except discord.NotFound:
+        referenced_message = None
+    if referenced_message is not None:
+      referenced_images = get_image_urls(referenced_message)
+      image_urls += referenced_images
+      if referenced_message.content.strip():
+        replied_to = f"{referenced_message.author.display_name}: {referenced_message.content.strip()}"
+      elif referenced_images:
+        replied_to = f"{referenced_message.author.display_name} sent an image."
+
+  result = await chat(msg, replied_to, image_urls)
   action = result.get("action")
 
   if action == "acro":
