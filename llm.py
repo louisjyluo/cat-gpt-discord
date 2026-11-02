@@ -1,14 +1,13 @@
 import os
 import json
-import asyncio
-from openai import OpenAI
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from helpUI import REGULAR_COMMANDS, ADMIN_COMMANDS
 
 
 load_dotenv()
 
-catClient = OpenAI(
+catClient = AsyncOpenAI(
   api_key=os.getenv('LITELLM_API_KEY', 'placeholder'),
   base_url=os.getenv('LITELLM_BASE_URL', 'placeholder'),
 )
@@ -215,7 +214,7 @@ async def chat(msg, replied_to=None, image_urls=None, pdfs=None):
         {"type": "file", "file": {"filename": name, "file_data": data_url}} for name, data_url in pdfs or []
       ]
 
-    response = catClient.chat.completions.create(
+    response = await catClient.chat.completions.create(
       model="openai/gpt-luna-latest",
       messages=[
         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
@@ -227,7 +226,6 @@ async def chat(msg, replied_to=None, image_urls=None, pdfs=None):
 
     response_message = response.choices[0].message
     tool_calls = response_message.tool_calls or []
-    await asyncio.sleep(1)
 
     if tool_calls:
       call = tool_calls[0]
@@ -294,7 +292,7 @@ async def web_search_reply(user_message, query, image_urls=None, pdfs=None):
         {"type": "input_file", "filename": name, "file_data": data_url} for name, data_url in pdfs or []
       ]}]
 
-    response = catClient.responses.create(
+    response = await catClient.responses.create(
       model="openai/gpt-luna-latest",
       tools=[{"type": "web_search"}],
       instructions=(
@@ -303,7 +301,6 @@ async def web_search_reply(user_message, query, image_urls=None, pdfs=None):
       ),
       input=search_input,
     )
-    await asyncio.sleep(1)
     return response.output_text
 
   except Exception as e:
@@ -317,7 +314,7 @@ async def favourite_acro_reply(phrase):
   print(f"API Request Count: {api_request_counter}")
 
   try:
-    response = catClient.chat.completions.create(
+    response = await catClient.chat.completions.create(
       model="openai/gpt-luna-latest",
       messages=[
         {"role": "system", "content": (
@@ -328,7 +325,6 @@ async def favourite_acro_reply(phrase):
         {"role": "user", "content": phrase}
       ]
     )
-    await asyncio.sleep(1)
     return response.choices[0].message.content
 
   except Exception as e:
@@ -351,7 +347,7 @@ async def summarize_text(text):
       "Prioritize sounding like a cat."
     )
 
-    response = catClient.chat.completions.create(
+    response = await catClient.chat.completions.create(
       model="openai/gpt-luna-latest",
       messages=[
         {"role": "system", "content": system_prompt},
@@ -360,7 +356,6 @@ async def summarize_text(text):
     )
 
     assistant_message = response.choices[0].message.content
-    await asyncio.sleep(1)
 
     return assistant_message
 
