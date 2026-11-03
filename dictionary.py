@@ -6,7 +6,7 @@ def find_acronyms_in_message(guild_id, message_content):
   """Scan message_content for any known acronyms stored for this guild.
   Returns a dict of {acronym: [phrase, ...]} for each match found.
   A 0-based index suffix like `GF[1]` narrows the result to that single phrase;
-  an out-of-range index maps the acronym to None."""
+  negative indices count from the end like Python lists; an out-of-range index maps the acronym to None."""
   guild_id = str(guild_id)
   results = list(acronym_collection.find(
     {'guild_id': guild_id},
@@ -26,7 +26,7 @@ def find_acronyms_in_message(guild_id, message_content):
   for acro, phrases in acronym_map.items():
     if not acro:
       continue
-    pattern = r'\b' + re.escape(acro) + r'\b(?:\[(\d+)\])?'
+    pattern = r'\b' + re.escape(acro) + r'\b(?:\[(-?\d+)\])?'
     matches = list(re.finditer(pattern, upper_content))
     if not matches:
       continue
@@ -34,7 +34,7 @@ def find_acronyms_in_message(guild_id, message_content):
     indexed = next((m for m in matches if m.group(1) is not None), None)
     if indexed is not None:
       index = int(indexed.group(1))
-      found[acro] = [phrases[index]] if index < len(phrases) else None
+      found[acro] = [phrases[index]] if -len(phrases) <= index < len(phrases) else None
 
   return found
 
