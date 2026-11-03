@@ -947,6 +947,9 @@ async def handle_auto_dict(msg):
   found = find_acronyms_in_message(str(msg.guild.id), msg.content)
   if not found:
     return
+  if any(phrases is None for phrases in found.values()):
+    await msg.reply("merrr, out of bounds vro. I swear this is NOT a good feature.")
+    return
   acro = random.choice(list(found.keys()))
   phrases = found[acro]
   joined = ", or ".join(f"**{p}**" for p in phrases)
