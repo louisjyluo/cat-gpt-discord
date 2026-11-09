@@ -81,9 +81,18 @@ def set_llm_disabled(guild_id, disabled):
   )
 
 
+def ensure_llm_setting(guild_id):
+  """Create the guild's flag document with LLM disabled; never overwrites an existing value."""
+  init_notification_collection.update_one(
+    {'guild_id': str(guild_id), 'channel_id': None},
+    {'$setOnInsert': {'llm_disabled': True}},
+    upsert=True,
+  )
+
+
 def is_llm_disabled(guild_id):
   doc = init_notification_collection.find_one({'guild_id': str(guild_id), 'channel_id': None})
-  return bool(doc and doc.get('llm_disabled'))
+  return True if doc is None else bool(doc.get('llm_disabled', True))
 
 
 def upsert_contributor(guild_id, user_id, display_name):

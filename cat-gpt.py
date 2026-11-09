@@ -17,7 +17,7 @@ from db import (
   set_init_notification, get_init_notification,
   get_enabled_init_notifications, upsert_contributor,
   set_fun_opt_out, is_fun_opt_out,
-  set_llm_disabled, is_llm_disabled,
+  set_llm_disabled, is_llm_disabled, ensure_llm_setting,
 )
 from races.race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
 from races.racer_ui import RacersPanelView, build_racers_embed
@@ -41,8 +41,14 @@ def save_database():
   save_acronym_database()
 
 @client.event
+async def on_guild_join(guild):
+  ensure_llm_setting(guild.id)
+
+@client.event
 async def on_ready():
     print('We have logged in as {0.user}'.format(client))
+    for guild in client.guilds:
+      ensure_llm_setting(guild.id)
     for doc in get_enabled_init_notifications():
       channel = client.get_channel(int(doc['channel_id']))
       if channel is None:
