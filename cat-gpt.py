@@ -12,6 +12,7 @@ from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSel
 from banUI import BanListView, build_ban_list_embed
 from helpUI import HelpView, build_help_embed
 from llm import chat, summarize_text, favourite_acro_reply
+from middleware import parse_message, FUN_OPT_OUT_REPLY
 from db import (
   init_db, close_db, get_user_balance, set_user_balance,
   set_init_notification, get_init_notification,
@@ -270,7 +271,7 @@ async def handle_catgpt_chat_command(msg, content_lower):
     if msg.guild is None:
       await msg.reply("This command only works in a server.")
     elif is_fun_opt_out(msg.author.id):
-      await msg.reply("You've opted out of acro/dict. Use `i_love_fun` to opt back in.")
+      await msg.reply(FUN_OPT_OUT_REPLY)
     else:
       await perform_acro_phrase(msg, result.get("phrase", ""), reserved_acro_commands)
   elif action == "gamble":
@@ -287,7 +288,7 @@ async def handle_catgpt_chat_command(msg, content_lower):
     if msg.guild is None:
       await msg.reply("This command only works in a server.")
     elif is_fun_opt_out(msg.author.id):
-      await msg.reply("You've opted out of acro/dict. Use `i_love_fun` to opt back in.")
+      await msg.reply(FUN_OPT_OUT_REPLY)
     else:
       await show_dict_list(msg)
   elif action == "blame":
@@ -358,16 +359,8 @@ def chunk_phrases(phrases):
 
 
 async def handle_acro_command(msg, protected_phrases):
-  if not msg.content.startswith("acro"):
+  if not msg.content.lower().startswith("acro"):
     return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
-  if is_fun_opt_out(msg.author.id):
-    await msg.reply("You've opted out of acro/dict. Use `i_love_fun` to opt back in.")
-    return True
 
   acro_input = msg.content[4:].lower().strip()
   if acro_input == "*":
@@ -408,16 +401,8 @@ async def show_dict_list(msg):
 
 
 async def handle_dict_command(msg):
-  if not msg.content.startswith("dict"):
+  if not msg.content.lower().startswith("dict"):
     return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
-  if is_fun_opt_out(msg.author.id):
-    await msg.reply("You've opted out of acro/dict. Use `i_love_fun` to opt back in.")
-    return True
 
   acro_input = msg.content[4:].strip()
 
@@ -430,12 +415,8 @@ async def handle_dict_command(msg):
 
 
 async def handle_unacro_command(msg):
-  if not msg.content.startswith("unacro"):
+  if not msg.content.lower().startswith("unacro"):
     return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
 
   acro_input = msg.content[6:].strip()
 
@@ -485,14 +466,6 @@ async def handle_unacroall_command(msg):
   if not msg.content.lower().startswith("unacroall"):
     return False
 
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
-  if msg.author.id != BLOUIS_ID:
-    await msg.reply("Only Blouis can use unacroall.")
-    return True
-
   parts = msg.content.split(maxsplit=1)
   if len(parts) != 2:
     await msg.reply("Usage: unacroall <user>")
@@ -517,14 +490,6 @@ async def handle_ban_command(msg):
   if not msg.content.lower().startswith("ban"):
     return False
 
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
-  if msg.author.id != BLOUIS_ID:
-    await msg.reply("Only Blouis can ban phrases.")
-    return True
-
   phrase = msg.content[3:].strip()
   if not phrase:
     await msg.reply("Usage: ban <phrase>")
@@ -544,14 +509,6 @@ async def handle_ban_command(msg):
 async def handle_unban_command(msg):
   if not msg.content.lower().startswith("unban"):
     return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
-  if msg.author.id != BLOUIS_ID:
-    await msg.reply("Only Blouis can unban phrases.")
-    return True
 
   phrase = msg.content[5:].strip()
   if not phrase:
@@ -573,10 +530,6 @@ async def handle_ban_list_command(msg, content_lower):
   if content_lower != "ban_list":
     return False
 
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
   entries = list_banned_phrases(str(msg.guild.id))
   embed = build_ban_list_embed(msg.guild.id, 0, entries)
   view = BanListView(msg.guild.id, page=0, entries=entries)
@@ -587,14 +540,6 @@ async def handle_ban_list_command(msg, content_lower):
 async def handle_notif_command(msg, content_lower):
   if content_lower != "notif":
     return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
-  if msg.author.id != BLOUIS_ID:
-    await msg.reply("Only Blouis can use notif.")
-    return True
 
   current = get_init_notification(str(msg.guild.id), str(msg.channel.id))
   new_state = not (current and current.get("enabled"))
@@ -611,14 +556,6 @@ async def handle_skribbl_command(msg, content_lower):
   if content_lower != "skribbl":
     return False
 
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
-  if msg.author.id != BLOUIS_ID:
-    await msg.reply("Only Blouis can use skribbl.")
-    return True
-
   phrases = get_charades_phrases(msg.guild.id, 100)
   if not phrases:
     await msg.reply("No acronym phrases found for this server.")
@@ -632,14 +569,6 @@ async def handle_skribbl_command(msg, content_lower):
 async def handle_toggle_llm_features_command(msg, content_lower):
   if content_lower != "toggle_llm_features":
     return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
-  if msg.author.id != BLOUIS_ID:
-    await msg.reply("Only Blouis can use toggle_llm_features.")
-    return True
 
   new_state = not is_llm_disabled(msg.guild.id)
   set_llm_disabled(msg.guild.id, new_state)
@@ -700,16 +629,12 @@ async def handle_bank_command(msg):
 
 
 async def handle_stim_command(msg):
-  if not msg.content.startswith("stim"):
+  if not msg.content.lower().startswith("stim"):
     return False
 
   parts = msg.content.split()
   if len(parts) != 3:
     await msg.reply("Usage: stim <username> <$amount>")
-    return True
-
-  if msg.author.id != BLOUIS_ID:
-    await msg.reply("Only Blouis can use stim.")
     return True
 
   _, username_arg, amount_arg = parts
@@ -738,10 +663,6 @@ async def handle_stim_command(msg):
 async def handle_claim_acro_command(msg):
   if not msg.content.lower().startswith("claim"):
     return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
 
   parts = msg.content.split()
   if len(parts) < 2:
@@ -814,10 +735,6 @@ async def handle_blame_acro_command(msg):
   if not msg.content.lower().startswith("blame"):
     return False
 
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
-
   parts = msg.content.split()
   if len(parts) != 2:
     await msg.reply("Usage: `blame <ACRO>`")
@@ -837,10 +754,6 @@ def get_charades_phrases(guild_id, count):
 async def handle_charades_command(msg):
   if not msg.content.lower().startswith("charades"):
     return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
 
   parts = msg.content.split()
   count = 3
@@ -868,10 +781,6 @@ async def handle_charades_command(msg):
 async def handle_unclaim_acro_command(msg):
   if not msg.content.lower().startswith("unclaim"):
     return False
-
-  if msg.guild is None:
-    await msg.reply("This command only works in a server.")
-    return True
 
   parts = msg.content.split()
   if len(parts) < 2:
@@ -972,8 +881,6 @@ async def handle_exact_commands(msg, content_lower):
 async def handle_auto_dict(msg):
   if msg.guild is None:
     return
-  if is_fun_opt_out(msg.author.id):
-    return
   found = find_acronyms_in_message(str(msg.guild.id), msg.content)
   if not found:
     return
@@ -983,7 +890,8 @@ async def handle_auto_dict(msg):
   acro = random.choice(list(found.keys()))
   phrases = found[acro]
   joined = ", or ".join(f"**{p}**" for p in phrases)
-  replys = [f"errm, **{acro}** stands for {joined}, it's slang btw <:errrrrrmm:1560710812417523753>",
+  emoji = discord.utils.get(msg.guild.emojis, name='errrrrrmm')
+  replys = [f"errm, **{acro}** stands for {joined}, it's slang btw {emoji if emoji else ':face_with_bags_under_eyes:'}",
             f"for those who just joined the chat, **{acro}** is short for {joined}",
             f"btw chat **{acro}** is slang for {joined}"]
   await msg.reply(replys[random.randint(0, len(replys) - 1)])
@@ -1000,29 +908,21 @@ async def handle_passive_reactions(msg):
   if any(word in msg.content for word in meow):
     await msg.reply(meowSeparate(msg.content))
 
-def has_ignore_flag(content):
-  """A standalone '-c' as the first or last word opts a message out of all bot handling."""
-  tokens = content.split()
-  if not tokens:
-    return False
-  return tokens[0].lower() == "-c" or tokens[-1].lower() == "-c"
-
-
 @client.event
 async def on_message(msg):
-  if msg.author.bot:
+  parsed = parse_message(msg, BLOUIS_ID)
+  if parsed is None:
     return
 
-  if has_ignore_flag(msg.content):
-    return
+  content_lower = parsed.content_lower
+  command = parsed.command
 
-  content_lower = msg.content.lower().strip()
-  command = content_lower.split(maxsplit=1)[0] if content_lower else ""
+  if parsed.blocked:
+    if parsed.block_reply:
+      await msg.reply(parsed.block_reply)
+    return
 
   if await handle_toggle_llm_features_command(msg, content_lower):
-    return
-
-  if msg.guild and command in {"catgpt", "catsum"} and is_llm_disabled(msg.guild.id):
     return
 
   if await handle_summary_command(msg, content_lower):
@@ -1057,13 +957,14 @@ async def on_message(msg):
     return
 
   matched_acronym = get_matching_acronym(str(msg.guild.id), content_lower) if msg.guild else None
-  if matched_acronym and not is_fun_opt_out(msg.author.id):
+  if matched_acronym and not parsed.fun_opt_out:
     await msg.reply("The Big " + matched_acronym)
 
   if await handle_exact_commands(msg, content_lower):
     return
 
-  await handle_auto_dict(msg)
+  if not parsed.fun_opt_out:
+    await handle_auto_dict(msg)
   await handle_passive_reactions(msg)
 
 try:
