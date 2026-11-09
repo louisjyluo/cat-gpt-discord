@@ -45,7 +45,7 @@ ADMIN_COMMANDS = [
   "`stim <username> <$amount>`: Adds money to a user's balance.",
   "`notif`: Toggles whether this channel gets a ping when I come online.",
   "`skribbl`: Sends 100 random acro phrases, comma-separated.",
-  "`disable_llm`: Toggles LLM commands on/off for this server (hidden from help and ignored while off).",
+  "`toggle_llm_features`: Toggles LLM commands on/off for this server (hidden from help and ignored while off).",
 ]
 
 def get_visible_commands(admin_mode, guild_id=None):

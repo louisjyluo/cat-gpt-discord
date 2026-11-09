@@ -96,7 +96,7 @@ protected_acro_phrases = {
     "ban_list",
     "notif",
     "skribbl",
-    "disable_llm",
+    "toggle_llm_features",
     "i_hate_fun",
     "i_love_fun"
 }
@@ -623,8 +623,8 @@ async def handle_skribbl_command(msg, content_lower):
   return True
 
 
-async def handle_disable_llm_command(msg, content_lower):
-  if content_lower != "disable_llm":
+async def handle_toggle_llm_features_command(msg, content_lower):
+  if content_lower != "toggle_llm_features":
     return False
 
   if msg.guild is None:
@@ -632,7 +632,7 @@ async def handle_disable_llm_command(msg, content_lower):
     return True
 
   if msg.author.id != BLOUIS_ID:
-    await msg.reply("Only Blouis can use disable_llm.")
+    await msg.reply("Only Blouis can use toggle_llm_features.")
     return True
 
   new_state = not is_llm_disabled(msg.guild.id)
@@ -1013,7 +1013,7 @@ async def on_message(msg):
   content_lower = msg.content.lower().strip()
   command = content_lower.split(maxsplit=1)[0] if content_lower else ""
 
-  if await handle_disable_llm_command(msg, content_lower):
+  if await handle_toggle_llm_features_command(msg, content_lower):
     return
 
   if msg.guild and command in {"catgpt", "catsum"} and is_llm_disabled(msg.guild.id):
