@@ -17,6 +17,7 @@ from db import (
   set_init_notification, get_init_notification,
   get_enabled_init_notifications, upsert_contributor,
   set_fun_opt_out, is_fun_opt_out,
+  set_llm_disabled, is_llm_disabled,
 )
 from races.race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
 from races.racer_ui import RacersPanelView, build_racers_embed
@@ -95,6 +96,7 @@ protected_acro_phrases = {
     "ban_list",
     "notif",
     "skribbl",
+    "disable_llm",
     "i_hate_fun",
     "i_love_fun"
 }
@@ -621,6 +623,27 @@ async def handle_skribbl_command(msg, content_lower):
   return True
 
 
+async def handle_disable_llm_command(msg, content_lower):
+  if content_lower != "disable_llm":
+    return False
+
+  if msg.guild is None:
+    await msg.reply("This command only works in a server.")
+    return True
+
+  if msg.author.id != BLOUIS_ID:
+    await msg.reply("Only Blouis can use disable_llm.")
+    return True
+
+  new_state = not is_llm_disabled(msg.guild.id)
+  set_llm_disabled(msg.guild.id, new_state)
+  if new_state:
+    await msg.reply("🔇 LLM commands are now disabled in this server.")
+  else:
+    await msg.reply("🔊 LLM commands are now enabled in this server.")
+  return True
+
+
 async def handle_i_hate_fun_command(msg):
   if not msg.content.lower().startswith("i_hate_fun"):
     return False
@@ -894,7 +917,8 @@ async def send_race_panel(msg):
 
 async def send_help_panel(msg):
   """Shared by the `help` command and CatGPT's agentic help tool call."""
-  await msg.reply(embed=build_help_embed(0), view=HelpView())
+  guild_id = msg.guild.id if msg.guild else None
+  await msg.reply(embed=build_help_embed(0, guild_id=guild_id), view=HelpView(guild_id=guild_id))
 
 
 async def handle_exact_commands(msg, content_lower):
@@ -987,14 +1011,19 @@ async def on_message(msg):
     return
 
   content_lower = msg.content.lower().strip()
+  command = content_lower.split(maxsplit=1)[0] if content_lower else ""
+
+  if await handle_disable_llm_command(msg, content_lower):
+    return
+
+  if msg.guild and command in {"catgpt", "catsum"} and is_llm_disabled(msg.guild.id):
+    return
 
   if await handle_summary_command(msg, content_lower):
     return
 
   if await handle_catgpt_chat_command(msg, content_lower):
     return
-
-  command = content_lower.split(maxsplit=1)[0] if content_lower else ""
 
   prefix_handlers = {
     "lex": handle_lex_command,

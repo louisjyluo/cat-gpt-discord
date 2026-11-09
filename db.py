@@ -72,6 +72,20 @@ def get_enabled_init_notifications():
   return list(init_notification_collection.find({'enabled': True}))
 
 
+def set_llm_disabled(guild_id, disabled):
+  """Guild-level doc in InitNotifications (channel_id None, no 'enabled' field so startup pings skip it)."""
+  init_notification_collection.update_one(
+    {'guild_id': str(guild_id), 'channel_id': None},
+    {'$set': {'guild_id': str(guild_id), 'channel_id': None, 'llm_disabled': bool(disabled)}},
+    upsert=True,
+  )
+
+
+def is_llm_disabled(guild_id):
+  doc = init_notification_collection.find_one({'guild_id': str(guild_id), 'channel_id': None})
+  return bool(doc and doc.get('llm_disabled'))
+
+
 def upsert_contributor(guild_id, user_id, display_name):
   """Cache a user's display name per guild so the dict UI never has to call the Discord API."""
   if not display_name:

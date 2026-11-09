@@ -1,11 +1,15 @@
 import discord
+from db import is_llm_disabled
 
 PAGE_SIZE = 8
 
-REGULAR_COMMANDS = [
+LLM_COMMANDS = [
   "`catgpt <message>`: Ask CatGPT a question.",
   "`catgpt summarize` or `catsum`: Reply to a message to summarize it.",
   "`catsum <number>`: Summarizes the last x messages in the channel (max 50).",
+]
+
+REGULAR_COMMANDS = LLM_COMMANDS + [
   "`lex <word>`: Alphabetically sorts letters in the word.",
   "`acro <phrase>`: Creates/stores an acronym for a word or phrase.",
   "`unacro <phrase>`: Removes a stored acronym for a word or phrase.",
@@ -41,11 +45,19 @@ ADMIN_COMMANDS = [
   "`stim <username> <$amount>`: Adds money to a user's balance.",
   "`notif`: Toggles whether this channel gets a ping when I come online.",
   "`skribbl`: Sends 100 random acro phrases, comma-separated.",
+  "`disable_llm`: Toggles LLM commands on/off for this server (hidden from help and ignored while off).",
 ]
 
+def get_visible_commands(admin_mode, guild_id=None):
+  if admin_mode:
+    return ADMIN_COMMANDS
+  if guild_id is not None and is_llm_disabled(guild_id):
+    return [c for c in REGULAR_COMMANDS if c not in LLM_COMMANDS]
+  return REGULAR_COMMANDS
 
-def build_help_embed(page, admin_mode=False):
-  commands = ADMIN_COMMANDS if admin_mode else REGULAR_COMMANDS
+
+def build_help_embed(page, admin_mode=False, guild_id=None):
+  commands = get_visible_commands(admin_mode, guild_id)
   total = len(commands)
   total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
   page = max(0, min(page, total_pages - 1))
@@ -60,10 +72,11 @@ def build_help_embed(page, admin_mode=False):
 
 
 class HelpView(discord.ui.View):
-  def __init__(self, page=0, admin_mode=False):
+  def __init__(self, page=0, admin_mode=False, guild_id=None):
     super().__init__(timeout=180)
     self.admin_mode = admin_mode
-    commands = ADMIN_COMMANDS if admin_mode else REGULAR_COMMANDS
+    self.guild_id = guild_id
+    commands = get_visible_commands(admin_mode, guild_id)
     self.total_pages = max(1, (len(commands) + PAGE_SIZE - 1) // PAGE_SIZE)
     self.page = max(0, min(page, self.total_pages - 1))
 
@@ -73,16 +86,16 @@ class HelpView(discord.ui.View):
 
   @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary, row=0)
   async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-    view = HelpView(page=self.page - 1, admin_mode=self.admin_mode)
-    await interaction.response.edit_message(embed=build_help_embed(view.page, self.admin_mode), view=view)
+    view = HelpView(page=self.page - 1, admin_mode=self.admin_mode, guild_id=self.guild_id)
+    await interaction.response.edit_message(embed=build_help_embed(view.page, self.admin_mode, self.guild_id), view=view)
 
   @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary, row=0)
   async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-    view = HelpView(page=self.page + 1, admin_mode=self.admin_mode)
-    await interaction.response.edit_message(embed=build_help_embed(view.page, self.admin_mode), view=view)
+    view = HelpView(page=self.page + 1, admin_mode=self.admin_mode, guild_id=self.guild_id)
+    await interaction.response.edit_message(embed=build_help_embed(view.page, self.admin_mode, self.guild_id), view=view)
 
   @discord.ui.button(label="Admin", style=discord.ButtonStyle.primary, row=0)
   async def admin_button(self, interaction: discord.Interaction, button: discord.ui.Button):
     new_admin_mode = not self.admin_mode
-    view = HelpView(page=0, admin_mode=new_admin_mode)
-    await interaction.response.edit_message(embed=build_help_embed(0, new_admin_mode), view=view)
+    view = HelpView(page=0, admin_mode=new_admin_mode, guild_id=self.guild_id)
+    await interaction.response.edit_message(embed=build_help_embed(0, new_admin_mode, self.guild_id), view=view)
