@@ -229,7 +229,7 @@ X_SEARCH_TOOL = {
 }
 
 async def chat(msg, replied_to=None, image_urls=None, pdfs=None, model=DEFAULT_MODEL):
-  grok = model == GROK_MODEL
+  grok = model == MODEL_CHOICES["grok"]
   global api_request_counter
   api_request_counter += 1
   print(f"API Request Count: {api_request_counter}")
@@ -334,7 +334,7 @@ async def web_search_reply(user_message, query, image_urls=None, pdfs=None, mode
       "Make the response sound like a cat replied and do not exceed 150 words under any circumstance."
     )
     tools = [{"type": "web_search"}]
-    if model == GROK_MODEL:
+    if model == MODEL_CHOICES["grok"]:
       tools.append({"type": "x_search"})
     if prefer_x:
       instructions += " The user asked to use X (Twitter), so prioritize x_search results."
