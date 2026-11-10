@@ -11,7 +11,8 @@ from dictionary import lookup_acronym, list_all_acronyms, find_acronyms_in_messa
 from dictionaryUI import DictView, build_dict_embed, ClaimSelectView, UnclaimSelectView
 from banUI import BanListView, build_ban_list_embed
 from helpUI import HelpView, build_help_embed
-from llm import chat, summarize_text, favourite_acro_reply
+from llm import chat, summarize_text, favourite_acro_reply, MODEL_CHOICES, DEFAULT_MODEL
+from llmUI import LlmModelView
 from middleware import parse_message, FUN_OPT_OUT_REPLY
 from db import (
   init_db, close_db, get_user_balance, set_user_balance,
@@ -19,6 +20,7 @@ from db import (
   get_enabled_init_notifications, upsert_contributor,
   set_fun_opt_out, is_fun_opt_out,
   set_llm_disabled, is_llm_disabled, ensure_llm_setting,
+  set_llm_model, get_llm_model,
 )
 from races.race_ui import RaceHistoryView, RacePanelView, build_race_embed, build_race_history_embed
 from races.racer_ui import RacersPanelView, build_racers_embed
@@ -40,6 +42,10 @@ def load_database():
 def save_database():
   save_gamble_database()
   save_acronym_database()
+
+def llm_model(msg):
+  key = get_llm_model(msg.guild.id) if msg.guild is not None else None
+  return MODEL_CHOICES.get(key, DEFAULT_MODEL)
 
 @client.event
 async def on_guild_join(guild):
@@ -104,6 +110,7 @@ protected_acro_phrases = {
     "notif",
     "skribbl",
     "toggle_llm_features",
+    "llm_maxxing",
     "i_hate_fun",
     "i_love_fun"
 }
@@ -173,7 +180,7 @@ async def summarize_recent_messages(msg, count):
   formatted = "\n".join(
     f"{m.author.display_name}: {m.content.strip()}" for m in fetched
   )
-  await msg.reply(await summarize_text(formatted))
+  await msg.reply(await summarize_text(formatted, model=llm_model(msg)))
 
 
 async def handle_summary_command(msg, content_lower):
@@ -204,7 +211,7 @@ async def handle_summary_command(msg, content_lower):
     await msg.reply("Purrhaps too short, human. It's under 350 characters, so no summary this time.")
     return True
 
-  await msg.reply(await summarize_text(text_to_summarize))
+  await msg.reply(await summarize_text(text_to_summarize, model=llm_model(msg)))
   return True
 
 
@@ -264,7 +271,7 @@ async def handle_catgpt_chat_command(msg, content_lower):
       elif referenced_pdfs:
         replied_to = f"{referenced_message.author.display_name} sent a PDF."
 
-  result = await chat(msg, replied_to, image_urls, pdfs)
+  result = await chat(msg, replied_to, image_urls, pdfs, model=llm_model(msg))
   action = result.get("action")
 
   if action == "acro":
@@ -304,7 +311,7 @@ async def handle_catgpt_chat_command(msg, content_lower):
       if not phrases:
         await msg.reply("No acronym phrases found for this server.")
       else:
-        await msg.reply(await favourite_acro_reply(phrases[0]))
+        await msg.reply(await favourite_acro_reply(phrases[0], model=llm_model(msg)))
   elif action == "unsupported":
     command = result.get("command", "").strip()
     await msg.reply(f"Sorry, I can't tool call this command, run `{command}` to use it.")
@@ -576,6 +583,17 @@ async def handle_toggle_llm_features_command(msg, content_lower):
     await msg.reply("🔇 LLM commands are now disabled in this server.")
   else:
     await msg.reply("🔊 LLM commands are now enabled in this server.")
+  return True
+
+
+async def handle_llm_maxxing_command(msg, content_lower):
+  if content_lower != "llm_maxxing":
+    return False
+
+  await msg.reply(
+    "Pick the LLM model for this server:",
+    view=LlmModelView(msg.guild.id, msg.author.id, get_llm_model(msg.guild.id)),
+  )
   return True
 
 
@@ -948,6 +966,7 @@ async def on_message(msg):
     "ban_list": lambda current_msg: handle_ban_list_command(current_msg, content_lower),
     "notif": lambda current_msg: handle_notif_command(current_msg, content_lower),
     "skribbl": lambda current_msg: handle_skribbl_command(current_msg, content_lower),
+    "llm_maxxing": lambda current_msg: handle_llm_maxxing_command(current_msg, content_lower),
     "i_hate_fun": handle_i_hate_fun_command,
     "i_love_fun": handle_i_love_fun_command,
   }

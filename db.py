@@ -95,6 +95,21 @@ def is_llm_disabled(guild_id):
   return True if doc is None else bool(doc.get('llm_disabled', True))
 
 
+def set_llm_model(guild_id, model_key):
+  """Stored on the same guild-level doc as llm_disabled."""
+  init_notification_collection.update_one(
+    {'guild_id': str(guild_id), 'channel_id': None},
+    {'$set': {'guild_id': str(guild_id), 'channel_id': None, 'llm_model': model_key}},
+    upsert=True,
+  )
+
+
+def get_llm_model(guild_id):
+  """Selected model key (see llm.MODEL_CHOICES), or None to use the default."""
+  doc = init_notification_collection.find_one({'guild_id': str(guild_id), 'channel_id': None})
+  return None if doc is None else doc.get('llm_model')
+
+
 def upsert_contributor(guild_id, user_id, display_name):
   """Cache a user's display name per guild so the dict UI never has to call the Discord API."""
   if not display_name:

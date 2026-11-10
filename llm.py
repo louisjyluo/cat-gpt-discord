@@ -13,6 +13,14 @@ catClient = AsyncOpenAI(
 )
 api_request_counter = 0
 
+DEFAULT_MODEL = "openai/gpt-luna-latest"
+MODEL_CHOICES = {
+  "luna": "openai/gpt-luna-latest",
+  "sol": "openai/gpt-sol-latest",
+  "astra": "openai/gpt-astra-latest",
+  "grok": "xai/grok-4.7",
+}
+
 def _build_command_reference():
   """Pulls from helpUI's command lists so the LLM's knowledge never drifts from the real `help` output."""
   regular = "\n".join(f"- {c}" for c in REGULAR_COMMANDS)
@@ -45,12 +53,18 @@ CHAT_SYSTEM_PROMPT = (
   "- web search (web_search), when the user asks about current events, recent info, or facts you are unsure of\n\n"
   "NOT tool-callable (the user must run these themselves): lex, unacro, claim, unclaim, charades (any general use), "
   "ban_list, i_hate_fun, i_love_fun, roll, racer/racers, race history, say hi, cat, blouis, redward, "
-  "and all owner-only commands (acro *, unacroall, ban, unban, stim, notif, skribbl, toggle_llm_features). "
+  "and all owner-only commands (acro *, unacroall, ban, unban, stim, notif, skribbl, toggle_llm_features, llm_maxxing). "
   "Only call a tool when the user's message is clearly asking for one of the tool-callable commands. "
   "If the user clearly asks you to do one of the NOT tool-callable commands, "
   "call report_unsupported_command with that command's trigger text instead of guessing or chatting normally. "
   "If the user asks what you can do or which commands you can run for them, answer from the two lists above. "
   "Otherwise, just reply normally in character."
+)
+
+MODEL_PROMPT_ADDENDUM_X = (
+  "\n\nYou also have x_search (search posts on X/Twitter). Call x_search whenever the user says to use X or Twitter "
+  "to find the data, e.g. 'use x to find', 'use twitter to find', 'twitter it', 'x it'. "
+  "Use web_search for other lookups."
 )
 
 CHAT_TOOLS = [
@@ -196,7 +210,26 @@ CHAT_TOOLS = [
   },
 ]
 
-async def chat(msg, replied_to=None, image_urls=None, pdfs=None):
+X_SEARCH_TOOL = {
+  "type": "function",
+  "function": {
+    "name": "x_search",
+    "description": "Search posts on X (Twitter). Call when the user says to use X or Twitter to find the data, e.g. 'use x to find', 'use twitter to find', 'twitter it', 'x it'.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The search query.",
+        }
+      },
+      "required": ["query"],
+    },
+  },
+}
+
+async def chat(msg, replied_to=None, image_urls=None, pdfs=None, model=DEFAULT_MODEL):
+  grok = model == GROK_MODEL
   global api_request_counter
   api_request_counter += 1
   print(f"API Request Count: {api_request_counter}")
@@ -215,12 +248,12 @@ async def chat(msg, replied_to=None, image_urls=None, pdfs=None):
       ]
 
     response = await catClient.chat.completions.create(
-      model="openai/gpt-luna-latest",
+      model=model,
       messages=[
-        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        {"role": "system", "content": CHAT_SYSTEM_PROMPT + (MODEL_PROMPT_ADDENDUM_X if grok else "")},
         {"role": "user", "content": user_content}
       ],
-      tools=CHAT_TOOLS,
+      tools=CHAT_TOOLS + [X_SEARCH_TOOL] if grok else CHAT_TOOLS,
       tool_choice="auto",
     )
 
@@ -264,7 +297,11 @@ async def chat(msg, replied_to=None, image_urls=None, pdfs=None):
       elif call.function.name == "web_search":
         query = str(args.get("query", "")).strip()
         if query:
-          return {"action": "reply", "text": await web_search_reply(user_message, query, image_urls, pdfs)}
+          return {"action": "reply", "text": await web_search_reply(user_message, query, image_urls, pdfs, model=model)}
+      elif call.function.name == "x_search" and grok:
+        query = str(args.get("query", "")).strip()
+        if query:
+          return {"action": "reply", "text": await web_search_reply(user_message, query, image_urls, pdfs, model=model, prefer_x=True)}
       elif call.function.name == "report_unsupported_command":
         command = str(args.get("command", "")).strip()
         if command:
@@ -277,7 +314,7 @@ async def chat(msg, replied_to=None, image_urls=None, pdfs=None):
     return {"action": "reply", "text": "Merrorr: Something went mwrong mmmmmm"}
 
 
-async def web_search_reply(user_message, query, image_urls=None, pdfs=None):
+async def web_search_reply(user_message, query, image_urls=None, pdfs=None, model=DEFAULT_MODEL, prefer_x=False):
   global api_request_counter
   api_request_counter += 1
   print(f"API Request Count: {api_request_counter}")
@@ -292,13 +329,20 @@ async def web_search_reply(user_message, query, image_urls=None, pdfs=None):
         {"type": "input_file", "filename": name, "file_data": data_url} for name, data_url in pdfs or []
       ]}]
 
+    instructions = (
+      "You are CatGPT, a Discord bot. Use web search to answer the user's question. "
+      "Make the response sound like a cat replied and do not exceed 150 words under any circumstance."
+    )
+    tools = [{"type": "web_search"}]
+    if model == GROK_MODEL:
+      tools.append({"type": "x_search"})
+    if prefer_x:
+      instructions += " The user asked to use X (Twitter), so prioritize x_search results."
+
     response = await catClient.responses.create(
-      model="openai/gpt-luna-latest",
-      tools=[{"type": "web_search"}],
-      instructions=(
-        "You are CatGPT, a Discord bot. Use web search to answer the user's question. "
-        "Make the response sound like a cat replied and do not exceed 150 words under any circumstance."
-      ),
+      model=model,
+      tools=tools,
+      instructions=instructions,
       input=search_input,
     )
     return response.output_text
@@ -308,14 +352,14 @@ async def web_search_reply(user_message, query, image_urls=None, pdfs=None):
     return "Merrorr: I couldn't search the web right meow."
 
 
-async def favourite_acro_reply(phrase):
+async def favourite_acro_reply(phrase, model=DEFAULT_MODEL):
   global api_request_counter
   api_request_counter += 1
   print(f"API Request Count: {api_request_counter}")
 
   try:
     response = await catClient.chat.completions.create(
-      model="openai/gpt-luna-latest",
+      model=model,
       messages=[
         {"role": "system", "content": (
           "You are CatGPT, a Discord bot with a cat personality. Someone asked what your favourite acro is. "
@@ -332,7 +376,7 @@ async def favourite_acro_reply(phrase):
     return f"My favourite acro is **{phrase}**, mrow!"
 
 
-async def summarize_text(text):
+async def summarize_text(text, model=DEFAULT_MODEL):
   global api_request_counter
   api_request_counter += 1
   print(f"API Request Count: {api_request_counter}")
@@ -348,7 +392,7 @@ async def summarize_text(text):
     )
 
     response = await catClient.chat.completions.create(
-      model="openai/gpt-luna-latest",
+      model=model,
       messages=[
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": text}

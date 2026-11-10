@@ -46,6 +46,7 @@ ADMIN_COMMANDS = [
   "`notif`: Toggles whether this channel gets a ping when I come online.",
   "`skribbl`: Sends 100 random acro phrases, comma-separated.",
   "`toggle_llm_features`: Toggles LLM commands on/off for this server (hidden from help and ignored while off).",
+  "`llm_maxxing`: Opens a menu to pick this server's LLM model (luna, sol, astra, or grok with web + X search).",
 ]
 
 def get_visible_commands(admin_mode, guild_id=None):

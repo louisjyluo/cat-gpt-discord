@@ -11,12 +11,12 @@ LLM_COMMANDS = {"catgpt", "catsum"}
 
 GUILD_ONLY_COMMANDS = {
   "acro", "dict", "unacro", "unacroall", "ban", "unban", "ban_list", "notif",
-  "skribbl", "toggle_llm_features", "claim", "blame", "charades", "unclaim",
+  "skribbl", "toggle_llm_features", "llm_maxxing", "claim", "blame", "charades", "unclaim",
 }
 GUILD_ONLY_REPLY = "This command only works in a server."
 
 OWNER_ONLY_REPLIES = {
-  **{c: f"Only Blouis can use {c}." for c in ("unacroall", "notif", "skribbl", "toggle_llm_features", "stim")},
+  **{c: f"Only Blouis can use {c}." for c in ("unacroall", "notif", "skribbl", "toggle_llm_features", "llm_maxxing", "stim")},
   "ban": "Only Blouis can ban phrases.",
   "unban": "Only Blouis can unban phrases.",
 }
