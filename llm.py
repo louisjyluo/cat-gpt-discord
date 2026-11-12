@@ -228,16 +228,24 @@ X_SEARCH_TOOL = {
   },
 }
 
-async def chat(msg, replied_to=None, image_urls=None, pdfs=None, model=DEFAULT_MODEL):
+async def chat(msg, history=None, image_urls=None, pdfs=None, model=DEFAULT_MODEL):
+  """`history` is the reply chain above `msg`, oldest first: [{"role": "user"|"assistant", "content": str}]."""
   grok = model == MODEL_CHOICES["grok"]
   global api_request_counter
   api_request_counter += 1
   print(f"API Request Count: {api_request_counter}")
 
   try:
+    history = history or []
     user_message = msg.content
-    if replied_to:
-      user_message = f"The user is replying to this message:\n\"\"\"\n{replied_to}\n\"\"\"\n\nTheir message: {msg.content}"
+    search_message = user_message
+    if history:
+      user_message = f"{msg.author.display_name}: {msg.content}"
+      # web_search_reply is single-shot, so it gets the chain flattened into text.
+      transcript = "\n".join(
+        f"CatGPT: {h['content']}" if h["role"] == "assistant" else h["content"] for h in history
+      )
+      search_message = f"Conversation so far:\n\"\"\"\n{transcript}\n\"\"\"\n\nTheir message: {user_message}"
 
     user_content = user_message
     if image_urls or pdfs:
@@ -251,6 +259,7 @@ async def chat(msg, replied_to=None, image_urls=None, pdfs=None, model=DEFAULT_M
       model=model,
       messages=[
         {"role": "system", "content": CHAT_SYSTEM_PROMPT + (MODEL_PROMPT_ADDENDUM_X if grok else "")},
+        *history,
         {"role": "user", "content": user_content}
       ],
       tools=CHAT_TOOLS + [X_SEARCH_TOOL] if grok else CHAT_TOOLS,
@@ -297,11 +306,11 @@ async def chat(msg, replied_to=None, image_urls=None, pdfs=None, model=DEFAULT_M
       elif call.function.name == "web_search":
         query = str(args.get("query", "")).strip()
         if query:
-          return {"action": "reply", "text": await web_search_reply(user_message, query, image_urls, pdfs, model=model)}
+          return {"action": "reply", "text": await web_search_reply(search_message, query, image_urls, pdfs, model=model)}
       elif call.function.name == "x_search" and grok:
         query = str(args.get("query", "")).strip()
         if query:
-          return {"action": "reply", "text": await web_search_reply(user_message, query, image_urls, pdfs, model=model, prefer_x=True)}
+          return {"action": "reply", "text": await web_search_reply(search_message, query, image_urls, pdfs, model=model, prefer_x=True)}
       elif call.function.name == "report_unsupported_command":
         command = str(args.get("command", "")).strip()
         if command:

@@ -245,33 +245,89 @@ async def get_pdfs(message):
   return pdfs
 
 
+MAX_REPLY_CHAIN = 5
+
+
+async def resolve_reference(message):
+  """Returns the message `message` replies to, or None if it's missing or inaccessible."""
+  ref = message.reference
+  if ref is None or ref.message_id is None:
+    return None
+  if isinstance(ref.resolved, discord.Message):
+    return ref.resolved
+  try:
+    return await message.channel.fetch_message(ref.message_id)
+  except discord.HTTPException:
+    return None
+
+
+def describe_message(message):
+  content = message.content.strip()
+  if content:
+    return content
+  if get_image_urls(message):
+    return "[sent an image]"
+  if any(a.filename.lower().endswith(".pdf") for a in message.attachments):
+    return "[sent a PDF]"
+  return ""
+
+
+async def collect_reply_chain(parent):
+  """Walks up the reply chain from `parent`, returning up to MAX_REPLY_CHAIN messages, oldest first."""
+  chain = []
+  seen = set()
+  current = parent
+  while current is not None and current.id not in seen and len(chain) < MAX_REPLY_CHAIN:
+    seen.add(current.id)
+    chain.append(current)
+    current = await resolve_reference(current)
+  chain.reverse()
+  return chain
+
+
+def chain_to_history(chain):
+  history = []
+  for m in chain:
+    text = describe_message(m)
+    if not text:
+      continue
+    if m.author.id == client.user.id:
+      history.append({"role": "assistant", "content": text})
+    else:
+      history.append({"role": "user", "content": f"{m.author.display_name}: {text}"})
+  return history
+
+
 async def handle_catgpt_chat_command(msg, content_lower):
   if not content_lower.startswith("catgpt ") or content_lower.startswith("catgpt summarize"):
     return False
+  await respond_with_chat(msg, await resolve_reference(msg))
+  return True
 
-  replied_to = None
+
+async def handle_reply_to_bot_chat(msg):
+  """Continues a conversation when a user replies to one of the bot's messages, no `catgpt` prefix needed."""
+  if msg.guild is None or is_llm_disabled(msg.guild.id) or msg.reference is None:
+    return False
+  parent = await resolve_reference(msg)
+  if parent is None or parent.author.id != client.user.id or not describe_message(parent):
+    return False
+  if not msg.content.strip() and not msg.attachments:
+    return False
+  await respond_with_chat(msg, parent)
+  return True
+
+
+async def respond_with_chat(msg, parent):
   image_urls = get_image_urls(msg)
   pdfs = await get_pdfs(msg)
-  if msg.reference is not None and msg.reference.message_id is not None:
-    referenced_message = msg.reference.resolved
-    if not isinstance(referenced_message, discord.Message):
-      try:
-        referenced_message = await msg.channel.fetch_message(msg.reference.message_id)
-      except discord.NotFound:
-        referenced_message = None
-    if referenced_message is not None:
-      referenced_images = get_image_urls(referenced_message)
-      image_urls += referenced_images
-      referenced_pdfs = await get_pdfs(referenced_message)
-      pdfs += referenced_pdfs[:max(0, MAX_PDFS - len(pdfs))]
-      if referenced_message.content.strip():
-        replied_to = f"{referenced_message.author.display_name}: {referenced_message.content.strip()}"
-      elif referenced_images:
-        replied_to = f"{referenced_message.author.display_name} sent an image."
-      elif referenced_pdfs:
-        replied_to = f"{referenced_message.author.display_name} sent a PDF."
+  history = []
+  if parent is not None:
+    history = chain_to_history(await collect_reply_chain(parent))
+    image_urls += get_image_urls(parent)
+    pdfs += (await get_pdfs(parent))[:max(0, MAX_PDFS - len(pdfs))]
 
-  result = await chat(msg, replied_to, image_urls, pdfs, model=llm_model(msg))
+  result = await chat(msg, history, image_urls, pdfs, model=llm_model(msg))
   action = result.get("action")
 
   if action == "acro":
@@ -317,8 +373,6 @@ async def handle_catgpt_chat_command(msg, content_lower):
     await msg.reply(f"Sorry, I can't tool call this command, run `{command}` to use it.")
   else:
     await msg.reply(result.get("text") or "Mrow?")
-
-  return True
 
 
 async def handle_lex_command(msg):
@@ -980,6 +1034,9 @@ async def on_message(msg):
     await msg.reply("The Big " + matched_acronym)
 
   if await handle_exact_commands(msg, content_lower):
+    return
+
+  if not matched_acronym and await handle_reply_to_bot_chat(msg):
     return
 
   if not parsed.fun_opt_out:
