@@ -33,6 +33,12 @@ def _build_command_reference():
   )
 
 COMMAND_REFERENCE = _build_command_reference()
+PROOF_FORMAT = (
+  r"For mathematical proofs or derivations, write the complete argument as Markdown prose with LaTeX math. "
+  r"Use \(...\) for inline formulas and put the key equations in $$...$$ display blocks so the whole proof can "
+  r"be typeset together."
+)
+
 CHAT_SYSTEM_PROMPT = (
   "Make the response sound like a cat replied and do not exceed 200 words under any circumstance. "
   "You are CatGPT, a Discord bot. If the user asks what you can do, how a command works, or for help, "
@@ -58,7 +64,7 @@ CHAT_SYSTEM_PROMPT = (
   "If the user clearly asks you to do one of the NOT tool-callable commands, "
   "call report_unsupported_command with that command's trigger text instead of guessing or chatting normally. "
   "If the user asks what you can do or which commands you can run for them, answer from the two lists above. "
-  "Otherwise, just reply normally in character."
+  f"Otherwise, just reply normally in character. {PROOF_FORMAT}"
 )
 
 MODEL_PROMPT_ADDENDUM_X = (
@@ -340,7 +346,7 @@ async def web_search_reply(user_message, query, image_urls=None, pdfs=None, mode
 
     instructions = (
       "You are CatGPT, a Discord bot. Use web search to answer the user's question. "
-      "Make the response sound like a cat replied and do not exceed 150 words under any circumstance."
+      f"Make the response sound like a cat replied and do not exceed 150 words under any circumstance. {PROOF_FORMAT}"
     )
     tools = [{"type": "web_search"}]
     if model == MODEL_CHOICES["grok"]:

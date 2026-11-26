@@ -13,6 +13,7 @@ from banUI import BanListView, build_ban_list_embed
 from helpUI import HelpView, build_help_embed
 from llm import chat, summarize_text, favourite_acro_reply, MODEL_CHOICES, DEFAULT_MODEL
 from llmUI import LlmModelView
+from llm_reply import send_reply, collect_reply_chain as _collect_reply_chain, chain_to_history as _chain_to_history
 from middleware import parse_message, FUN_OPT_OUT_REPLY, CATGPT_ALIASES
 from db import (
   init_db, close_db, get_user_balance, set_user_balance,
@@ -153,6 +154,11 @@ def resolve_stim_target_id(msg, username_arg):
   return None
 
 
+async def reply_llm(msg, text):
+  can_attach = msg.guild is None or msg.channel.permissions_for(msg.guild.me).attach_files
+  await send_reply(msg, text, can_attach)
+
+
 async def summarize_recent_messages(msg, count):
   """Summarizes the last `count` non-bot messages in the channel. Shared by `catsum <number>` and CatGPT's agentic summarize tool call."""
   count = min(count, 50)
@@ -180,7 +186,7 @@ async def summarize_recent_messages(msg, count):
   formatted = "\n".join(
     f"{m.author.display_name}: {m.content.strip()}" for m in fetched
   )
-  await msg.reply(await summarize_text(formatted, model=llm_model(msg)))
+  await reply_llm(msg, await summarize_text(formatted, model=llm_model(msg)))
 
 
 async def handle_summary_command(msg, content_lower):
@@ -211,7 +217,7 @@ async def handle_summary_command(msg, content_lower):
     await msg.reply("Purrhaps too short, human. It's under 350 characters, so no summary this time.")
     return True
 
-  await msg.reply(await summarize_text(text_to_summarize, model=llm_model(msg)))
+  await reply_llm(msg, await summarize_text(text_to_summarize, model=llm_model(msg)))
   return True
 
 
@@ -245,7 +251,7 @@ async def get_pdfs(message):
   return pdfs
 
 
-MAX_REPLY_CHAIN = 5
+MAX_REPLY_CHAIN = 5  # turns; a multipart CatGPT answer counts as one
 
 
 async def resolve_reference(message):
@@ -266,6 +272,10 @@ def describe_message(message):
   if content:
     return content
   if get_image_urls(message):
+    # CatGPT's proof and equation images carry their source as alt text.
+    alt_texts = [a.description for a in message.attachments if a.description]
+    if message.author.id == client.user.id and alt_texts:
+      return "\n".join(alt_texts)
     return "[sent an image]"
   if any(a.filename.lower().endswith(".pdf") for a in message.attachments):
     return "[sent a PDF]"
@@ -273,29 +283,8 @@ def describe_message(message):
 
 
 async def collect_reply_chain(parent):
-  """Walks up the reply chain from `parent`, returning up to MAX_REPLY_CHAIN messages, oldest first."""
-  chain = []
-  seen = set()
-  current = parent
-  while current is not None and current.id not in seen and len(chain) < MAX_REPLY_CHAIN:
-    seen.add(current.id)
-    chain.append(current)
-    current = await resolve_reference(current)
-  chain.reverse()
-  return chain
-
-
-def chain_to_history(chain):
-  history = []
-  for m in chain:
-    text = describe_message(m)
-    if not text:
-      continue
-    if m.author.id == client.user.id:
-      history.append({"role": "assistant", "content": text})
-    else:
-      history.append({"role": "user", "content": f"{m.author.display_name}: {text}"})
-  return history
+  """Walks up the reply chain from `parent`, returning up to MAX_REPLY_CHAIN turns, oldest first."""
+  return await _collect_reply_chain(parent, client.user.id, resolve_reference, MAX_REPLY_CHAIN)
 
 
 async def handle_catgpt_chat_command(msg, content_lower):
@@ -324,7 +313,7 @@ async def respond_with_chat(msg, parent):
   pdfs = await get_pdfs(msg)
   history = []
   if parent is not None:
-    history = chain_to_history(await collect_reply_chain(parent))
+    history = await _chain_to_history(await collect_reply_chain(parent), client.user.id, describe_message)
     image_urls += get_image_urls(parent)
     pdfs += (await get_pdfs(parent))[:max(0, MAX_PDFS - len(pdfs))]
 
@@ -368,12 +357,12 @@ async def respond_with_chat(msg, parent):
       if not phrases:
         await msg.reply("No acronym phrases found for this server.")
       else:
-        await msg.reply(await favourite_acro_reply(phrases[0], model=llm_model(msg)))
+        await reply_llm(msg, await favourite_acro_reply(phrases[0], model=llm_model(msg)))
   elif action == "unsupported":
     command = result.get("command", "").strip()
     await msg.reply(f"Sorry, I can't tool call this command, run `{command}` to use it.")
   else:
-    await msg.reply(result.get("text") or "Mrow?")
+    await reply_llm(msg, result.get("text") or "Mrow?")
 
 
 async def handle_lex_command(msg):
